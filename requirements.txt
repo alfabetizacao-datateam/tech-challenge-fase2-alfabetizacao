@@ -10,6 +10,10 @@ setuptools<81
 pyspark==3.5.0
 pandas==2.3.3
 numpy==2.4.4
+# pyarrow: engine usado internamente por pandas.to_parquet() (sem import
+# direto no codigo, por isso nao apareceu no grep de imports). Sem isso:
+# "ImportError: Unable to find a usable engine" em qualquer .to_parquet().
+pyarrow==23.0.1
 scikit-learn==1.8.0
 requests==2.33.1
 pytest==9.0.3
