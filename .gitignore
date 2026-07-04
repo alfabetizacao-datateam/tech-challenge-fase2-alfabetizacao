@@ -1,0 +1,58 @@
+venv/
+.venv/
+datalake/
+winutils/
+__pycache__/
+*.pyc
+*.parquet
+*.crc
+datalake_sample/bronze/ibge_*_temp.*
+/dados_completos/
+
+# ============================================================
+# TERRAFORM — Infrastructure as Code
+# ============================================================
+
+# State files (contêm info sensível de infra)
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# Diretório de trabalho do Terraform (plugins baixados)
+**/.terraform/
+.terraform.lock.hcl
+
+# Arquivos de plan
+*.tfplan
+tfplan
+
+# Variáveis com secrets (NUNCA commitar)
+terraform.tfvars
+*.auto.tfvars
+secrets.tfvars
+
+# Logs de crash
+crash.log
+crash.*.log
+
+# ============================================================
+# GCP — Credenciais e arquivos temporários
+# ============================================================
+
+# Service account keys (NUNCA commitar chaves GCP)
+*-credentials.json
+service-account-key.json
+*-sa-key.json
+
+# gcloud config local
+.gcloud/
+
+# Outputs regeneraveis do pipeline (rodar o pipeline recria)
+datalake_sample/bronze/
+datalake_sample/silver/
+datalake_sample/gold/
+
+# Winutils - binario de terceiros, ver docs/guias/GUIA_WINUTILS_WINDOWS.md
+hadoop/bin/*.exe
+hadoop/bin/*.dll
