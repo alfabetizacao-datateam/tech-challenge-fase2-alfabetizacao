@@ -1,5 +1,12 @@
 # Nucleo do pipeline (Bronze/Silver/Gold, testes, deploy GCP)
 # Levantado por grep real dos imports em src/ e tests/ - nao e pip freeze.
+#
+# setuptools<81: Python 3.12+ removeu 'distutils' da stdlib. pyspark==3.5.0
+# usa distutils.version.LooseVersion internamente (toPandas() quebra sem isso).
+# setuptools <81 ainda vendoriza um shim de distutils que cobre o buraco.
+# Sem isso: "ModuleNotFoundError: No module named 'distutils'" em qualquer
+# .toPandas() (ex: src/features/02_imputar_metas_knn.py).
+setuptools<81
 pyspark==3.5.0
 pandas==2.3.3
 numpy==2.4.4
