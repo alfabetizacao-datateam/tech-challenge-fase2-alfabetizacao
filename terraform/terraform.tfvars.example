@@ -1,0 +1,6 @@
+# Copie este arquivo para terraform.tfvars e preencha com seus valores reais
+# NUNCA commite terraform.tfvars (já está no .gitignore)
+
+project_id  = "tech-challenge-fase2-fiap"
+region      = "us-central1"
+bucket_name = "alfabetizacao-datalake-fiap"
