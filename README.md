@@ -107,7 +107,7 @@ A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado
 
 > **Nota de escopo:** "desperdício" mede ineficiência de gasto educacional total (base: população do município); "investimento necessário" mede o custo específico de fechar o gap de alfabetização (base: fração alfabetizável, ADR-013). São dois recortes de gasto diferentes — a razão entre eles (28,69×) é uma leitura de "quanto já se desperdiça hoje vs. quanto seria preciso investir", não uma comparação de mesma base populacional.
 >
-> Números validados por consistência aritmética/lógica (não por reconsulta ao BigQuery de produção). Antes de publicar, rode `python scripts/verificar_numeros_publicacao.py` (requer acesso GCP) para confirmar contra os dados atuais.
+> Números confirmados direto no BigQuery de produção em 2026-07-06 via `scripts/verificar_numeros_publicacao.py` — todas as métricas bateram exatamente com os valores acima. Rode o script de novo se os dados forem reprocessados no futuro.
 
 ## Estrutura do repositório
 
