@@ -11,6 +11,14 @@ from pyspark.sql.window import Window
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("GoldMartGenerator")
 
+# ---------------------------------------------------------------------------
+# Parametros economicos do modelo de custo (ver ADR-012 e ADR-013)
+# Mantidos identicos aos de src/cloud/dataproc_03_gold.py para que o script
+# local e o pipeline cloud produzam o mesmo numero — ver docs/NUMEROS_RECALCULADOS.md
+# ---------------------------------------------------------------------------
+CUSTO_PONTO_PER_CAPITA_DEFAULT = 20.0  # R$/habitante/ponto percentual (ADR-012)
+FRACAO_POPULACAO_ALFABETIZAVEL = 0.013  # coorte de idade unica ~7 anos (ADR-013)
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
 
@@ -500,8 +508,8 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
     logger.info("MART 9: agg_projecao_investimento")
     logger.info("=" * 60)
     logger.info("  Proposito: Quanto custaria levar cada municipio a 80% de alfabetizacao?")
-    logger.info("  Benchmark: mediana custo_por_ponto dos municipios Eficientes (SICONFI)")
-    logger.info("  Fallback: R$200/ponto/1000 hab (R$2.000/aluno-ano OCDE-like)")
+    logger.info("  Modelo: custo marginal per capita (ADR-012) x populacao alfabetizavel (ADR-013)")
+    logger.info("  Fallback: R$20/hab/ponto (~R$2.000/aluno-ano) se nao ha benchmark SICONFI")
 
     cols = set(df.columns)
     if "gasto_por_habitante_educacao" not in cols:
@@ -517,28 +525,25 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
     )
 
     # -------------------------------------------------------------------------
-    # Benchmark calibrado com dado real SICONFI dos municipios Eficientes
-    # Logica: a mediana do custo_por_ponto dos Eficientes (quem gasta pouco e
-    # alfabetiza bem) e o melhor proxy do custo marginal real de elevar 1 ponto.
-    # Elimina a suposicao fixa de R$2.000/aluno (TD-06).
-    # Fallback para R$200/ponto se df_eficiencia nao disponivel.
+    # Benchmark de custo marginal PER CAPITA (R$/hab/ponto percentual) — ADR-012.
+    # Derivado da mediana dos municipios Eficientes (classificacao_eficiencia
+    # comeca com "1") quando ha SICONFI; caso contrario usa a constante default.
     # -------------------------------------------------------------------------
-    CUSTO_FALLBACK = 200.0  # R$200/ponto/1000 hab
-    custo_por_ponto_percentual = CUSTO_FALLBACK
-    fonte_benchmark = "fallback (R$2.000/aluno-ano OCDE-like)"
+    custo_ponto_pc = CUSTO_PONTO_PER_CAPITA_DEFAULT
+    fonte_benchmark = f"fallback (R${CUSTO_PONTO_PER_CAPITA_DEFAULT}/hab/ponto, ~R$2.000/aluno-ano)"
 
     if df_eficiencia is not None:
         try:
-            eficientes = df_eficiencia.filter(col("classificacao") == "Eficiente")
-            if "custo_por_ponto_alfabetizacao" in df_eficiencia.columns:
-                mediana = eficientes.approxQuantile("custo_por_ponto_alfabetizacao", [0.5], 0.01)
+            eficientes = df_eficiencia.filter(col("classificacao_eficiencia").startswith("1"))
+            if "custo_por_ponto_alfabetizacao_medio" in df_eficiencia.columns:
+                mediana = eficientes.approxQuantile("custo_por_ponto_alfabetizacao_medio", [0.5], 0.01)
                 if mediana and mediana[0] and mediana[0] > 0:
-                    custo_por_ponto_percentual = round(mediana[0], 2)
-                    fonte_benchmark = f"mediana SICONFI/Eficientes = R${custo_por_ponto_percentual:,.2f}/ponto/mun"
+                    custo_ponto_pc = round(mediana[0], 2)
+                    fonte_benchmark = f"mediana SICONFI/Eficientes = R${custo_ponto_pc:,.2f}/hab/ponto"
         except Exception as e:
             logger.warning(f"  Erro ao calcular benchmark SICONFI: {e}. Usando fallback.")
 
-    logger.info(f"  Benchmark custo/ponto: {fonte_benchmark}")
+    logger.info(f"  Benchmark custo marginal: {fonte_benchmark}")
 
     df_agg = df_agg.withColumn(
         "gap_ate_80",
@@ -548,9 +553,16 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
         "gap_ate_80",
         when(col("gap_ate_80") < 0, lit(0)).otherwise(col("gap_ate_80"))
     )
+    # populacao_total e a populacao TOTAL do municipio (todos habitantes), nao
+    # contagem de alunos do 2o ano — sem a fracao abaixo o custo infla ~77x
+    # (ver ADR-013).
+    df_agg = df_agg.withColumn(
+        "populacao_alfabetizavel_estimada",
+        spark_round(col("populacao_total") * lit(FRACAO_POPULACAO_ALFABETIZAVEL), 0)
+    )
     df_agg = df_agg.withColumn(
         "custo_estimado_para_atingir_80",
-        spark_round(col("gap_ate_80") * lit(custo_por_ponto_percentual) * (col("populacao_total") / 1000), 2)
+        spark_round(col("gap_ate_80") * lit(custo_ponto_pc) * col("populacao_alfabetizavel_estimada"), 2)
     )
     df_agg = df_agg.withColumn(
         "custo_per_capta_atingir_80",
@@ -566,7 +578,7 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
         .otherwise("4 - Muito Alto (>R$50M)")
     )
     # Coluna de rastreabilidade: mostra qual benchmark foi usado neste calculo
-    df_agg = df_agg.withColumn("benchmark_custo_ponto", lit(round(custo_por_ponto_percentual, 2)))
+    df_agg = df_agg.withColumn("benchmark_custo_ponto_per_capita", lit(round(custo_ponto_pc, 2)))
 
     df_agg = df_agg.filter(col("gap_ate_80") > 0) \
         .orderBy(col("custo_estimado_para_atingir_80").desc())
