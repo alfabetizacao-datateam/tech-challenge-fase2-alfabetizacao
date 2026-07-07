@@ -175,19 +175,19 @@ def build_mart_municipio_ranking(df):
         .otherwise("4 - Risco Critico (Abaixo de 75%)")
     )
 
-    score_peso_deficit = 0.4
-    score_peso_gap = 0.4
-    score_peso_pop = 0.2
-    max_deficit = mart.select(max("deficit_absoluto_proxy")).collect()[0][0] or 1  # MAX, nao sum
-    max_pop = mart.select(max("populacao_total")).collect()[0][0] or 1
-    min_gap = mart.select(min("gap_meta")).collect()[0][0] or -100
-
+    # score baseado em severidade por habitante (gap relativo + distancia da meta)
+    # Sem peso direto de populacao_total — cidades grandes tem capacidade fiscal
+    # propria e nao devem dominar o ranking apenas por escala populacional.
+    # deficit_absoluto_proxy correlaciona 0.955 com populacao_total (e' o mesmo
+    # proxy de escala) — inclui-lo aqui junto de um peso direto de populacao
+    # duplicava o peso de tamanho no score (~60% efetivo, nao os 20% nominais).
+    # Formula identica a src/cloud/dataproc_03_gold.py (mesmo mart).
     mart = mart.withColumn(
         "score_prioridade",
         spark_round(
-            (col("deficit_absoluto_proxy") / max_deficit * score_peso_deficit) +
-            ((col("gap_meta") - min_gap) / (-min_gap) * score_peso_gap) +
-            (col("populacao_total") / max_pop * score_peso_pop)
+            when(col("gap_meta") < 0, (-col("gap_meta")) / 100.0).otherwise(lit(0)) * 0.6 +
+            when(lit(80.0) - col("taxa_alfabetizacao") > 0,
+                 (lit(80.0) - col("taxa_alfabetizacao")) / 80.0).otherwise(lit(0)) * 0.4
             , 4
         )
     )
@@ -256,30 +256,63 @@ def build_mart_priorizacao(df):
         countDistinct("ano").alias("anos_com_dado")
     )
 
-    mediana_deficit = df_agg.approxQuantile("deficit_absoluto_proxy", [0.5], 0.01)[0] or 1
+    # Porte do municipio — contexto de capacidade fiscal propria
+    df_agg = df_agg.withColumn(
+        "porte_municipio",
+        when(col("populacao_total") >= 500000, "1-Metropole")
+        .when(col("populacao_total") >= 100000, "2-Grande")
+        .when(col("populacao_total") >= 20000, "3-Medio")
+        .otherwise("4-Pequeno")
+    )
+    # Deficit por habitante — elimina vies de escala populacional (deficit_absoluto_proxy
+    # correlaciona 0.955 com populacao_total; usar o valor bruto no quadrante/ranking
+    # fazia metropoles dominarem so por tamanho, mesmo com taxa mediana).
+    df_agg = df_agg.withColumn(
+        "deficit_per_capita",
+        spark_round(
+            when(col("populacao_total") > 0, col("deficit_absoluto_proxy") / col("populacao_total"))
+            .otherwise(lit(0)), 4)
+    )
+
+    mediana_deficit_pc = df_agg.approxQuantile("deficit_per_capita", [0.5], 0.01)[0] or 0.5
     mediana_taxa = df_agg.approxQuantile("taxa_alfabetizacao_media", [0.5], 0.01)[0] or 50
 
-    logger.info(f"  Mediana deficit (corte Eficiencia): {mediana_deficit:,.0f}")
+    logger.info(f"  Mediana deficit per capita (corte Eficiencia): {mediana_deficit_pc:.4f}")
     logger.info(f"  Mediana taxa (corte Equidade): {mediana_taxa:.1f}%")
 
+    # Quadrantes baseados em taxa e deficit per capita (nao absoluto)
     df_agg = df_agg.withColumn(
         "quadrante",
         when(
             (col("taxa_alfabetizacao_media") < mediana_taxa) &
-            (col("deficit_absoluto_proxy") >= mediana_deficit),
+            (col("deficit_per_capita") >= mediana_deficit_pc),
             "1 - Maxima (Equidade + Eficiencia)"
         )
         .when(
             (col("taxa_alfabetizacao_media") < mediana_taxa) &
-            (col("deficit_absoluto_proxy") < mediana_deficit),
+            (col("deficit_per_capita") < mediana_deficit_pc),
             "2 - Equidade (Alta Severidade)"
         )
         .when(
             (col("taxa_alfabetizacao_media") >= mediana_taxa) &
-            (col("deficit_absoluto_proxy") >= mediana_deficit),
+            (col("deficit_per_capita") >= mediana_deficit_pc),
             "3 - Eficiencia (Alto Volume)"
         )
         .otherwise("4 - Monitoramento")
+    )
+
+    # Ranking por vulnerabilidade: dentro do quadrante, menor taxa = maior urgencia.
+    # Metropoles sao penalizadas pois tem capacidade fiscal pra autofinanciar
+    # (ISS, transferencias de ICMS) sem depender de repasse federal.
+    df_agg = df_agg.withColumn(
+        "peso_vulnerabilidade",
+        when(col("porte_municipio") == "1-Metropole", lit(0.6))
+        .when(col("porte_municipio") == "2-Grande", lit(0.8))
+        .otherwise(lit(1.0))
+    )
+    df_agg = df_agg.withColumn(
+        "score_vulnerabilidade",
+        spark_round((lit(100.0) - col("taxa_alfabetizacao_media")) / 100.0 * col("peso_vulnerabilidade"), 4)
     )
 
     window_ranking = Window.orderBy(
@@ -287,11 +320,11 @@ def build_mart_priorizacao(df):
         .when(col("quadrante").startswith("2"), 2)
         .when(col("quadrante").startswith("3"), 3)
         .otherwise(4).asc(),
-        col("deficit_absoluto_proxy").desc()
+        col("score_vulnerabilidade").desc()
     )
     df_agg = df_agg.withColumn("ranking_prioridade", row_number().over(window_ranking))
 
-    df_agg = df_agg.orderBy("ranking_prioridade")
+    df_agg = df_agg.drop("peso_vulnerabilidade").orderBy("ranking_prioridade")
     logger.info(f"  Gerado: {df_agg.count()} linhas")
     return df_agg
 
@@ -416,16 +449,15 @@ def build_mart_top10_uf(df):
         .otherwise("4 - Risco Critico (Abaixo de 75%)")
     )
 
-    max_deficit = mart.select(max("deficit_absoluto_proxy")).collect()[0][0] or 1  # MAX, nao sum
-    max_pop = mart.select(max("populacao_total")).collect()[0][0] or 1
-    min_gap = mart.select(min("gap_meta")).collect()[0][0] or -100
-
+    # score consistente com agg_municipio_ranking — sem peso direto de populacao
+    # (deficit_absoluto_proxy correlaciona 0.955 com populacao_total, dupla
+    # contagem). Formula identica a src/cloud/dataproc_03_gold.py.
     mart = mart.withColumn(
         "score_prioridade",
         spark_round(
-            (col("deficit_absoluto_proxy") / max_deficit * 0.4) +
-            ((col("gap_meta") - min_gap) / (-min_gap) * 0.4) +
-            (col("populacao_total") / max_pop * 0.2),
+            when(col("gap_meta") < 0, (-col("gap_meta")) / 100.0).otherwise(lit(0)) * 0.6 +
+            when(lit(80.0) - col("taxa_alfabetizacao") > 0,
+                 (lit(80.0) - col("taxa_alfabetizacao")) / 80.0).otherwise(lit(0)) * 0.4,
             4
         )
     )
