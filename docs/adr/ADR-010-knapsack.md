@@ -27,19 +27,22 @@ narrativa (ex: dezenas de municípios em vez de milhares), considerar como
 gatilho de revisão (seção 6): reavaliar `ORCAMENTO_ALOCACAO` ou o benchmark
 `CUSTO_PONTO_PER_CAPITA_DEFAULT`.
 
-## 0.1. RECÁLCULO CONCLUÍDO (2026-07-06) — números finais
+## 0.1. RECÁLCULO CONCLUÍDO (2026-07-06, refinado em 2026-07-07) — números finais
 
 A pendência da seção 0 foi fechada. Reprocessamento completo no GCP
 (pós-ADR-012 e ADR-013), números extraídos do BigQuery e confirmados ao
 vivo via `scripts/verificar_numeros_publicacao.py` (ver
-`docs/NUMEROS_RECALCULADOS.md`):
+`docs/NUMEROS_RECALCULADOS.md`). Em 2026-07-07, `build_mart_alocacao_otima`
+foi corrigido para usar o mesmo benchmark calibrado via SICONFI que
+`agg_projecao_investimento` já usava (antes usava sempre a constante
+default) — cobertura subiu levemente:
 
-| Métrica | Valor final | Ilustrativo (seção 0, obsoleto) |
-|---|---|---|
-| Municípios com gap (universo) | 4.679 | 2.815 (universo era outro) |
-| Municípios selecionados no orçamento | 2.329 | 2.815 |
-| Cobertura do orçamento | 49,8% dos municípios com gap | 99,96% |
-| Alunos estimados beneficiados | 246.563 | não reportado |
+| Métrica | Valor final (07-07) | 07-06 (benchmark default) | Ilustrativo (seção 0, obsoleto) |
+|---|---|---|---|
+| Municípios com gap (universo) | 4.679 | 4.679 | 2.815 (universo era outro) |
+| Municípios selecionados no orçamento | 2.331 | 2.329 | 2.815 |
+| Cobertura do orçamento | 49,8% dos municípios com gap | 49,8% | 99,96% |
+| Alunos estimados beneficiados | 255.223 | 246.563 | não reportado |
 
 A cobertura caiu de ~todos para ~metade — não porque o algoritmo piorou, mas
 porque o benchmark de custo real (~R$1.939/aluno, calibrado via SICONFI) é

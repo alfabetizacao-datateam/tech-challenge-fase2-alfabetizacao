@@ -21,9 +21,9 @@ ESPERADO = {
     "municipios_com_gap": 4679,
     "roi_fator_nacional": 28.69,
     "total_com_gap": 4679,
-    "selecionados_no_orcamento": 2329,
+    "selecionados_no_orcamento": 2331,
     "pct_cobertura": 49.8,
-    "alunos_beneficiados": 246563,
+    "alunos_beneficiados": 255223,
 }
 
 TOLERANCIA_PCT = 0.02  # 2% — variacao pequena eh esperada se a base mudou

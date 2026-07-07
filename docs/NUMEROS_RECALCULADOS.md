@@ -1,4 +1,4 @@
-# Números Recalculados — Reprocessamento GCP 2026-07-04
+# Números Recalculados — Reprocessamento GCP 2026-07-04 (+ correção 2026-07-07)
 
 > Substitui os números do README antigo (R$703M / ROI 19,4x / 2.815 municípios),
 > calculados com o modelo de custo pré-ADR-012. Estes valores vêm do BigQuery
@@ -6,6 +6,13 @@
 > (5.550 municípios), pós-ADR-012 (custo marginal per capita) **e** pós-ADR-013
 > (fração de população alfabetizável — ver abaixo, achado durante este
 > reprocessamento).
+>
+> **Atualização 2026-07-07:** a tabela 3 (cobertura do knapsack) foi
+> reprocessada de novo depois de um fix na auditoria ponta a ponta —
+> `agg_alocacao_otima` usava a constante default de custo (R$20/hab/ponto) em
+> vez do benchmark calibrado via SICONFI (~R$19,39/hab/ponto) que
+> `agg_projecao_investimento` já usava. Tabelas 1 e 2 (investimento, ROI) não
+> mudaram — não dependem desse benchmark no knapsack.
 
 ## Achado crítico durante o reprocessamento (ADR-013)
 
@@ -67,16 +74,21 @@ SELECT COUNT(*) AS total_com_gap, COUNTIF(selecionado_no_orcamento) AS seleciona
 FROM `tech-challenge-fase2-fiap.alfabetizacao_gold.agg_alocacao_otima`;
 ```
 
-| Métrica | Valor | Modelo antigo (README) |
-|---|---|---|
-| Municípios selecionados / total com gap | **2.329 / 4.679** | 2.815 / 2.815 |
-| Cobertura do orçamento | **49,8%** | 99,96% |
-| Alunos estimados beneficiados | **246.563** | (não reportado) |
+| Métrica | Valor | 2026-07-04 (benchmark default no knapsack) | Modelo antigo (README) |
+|---|---|---|---|
+| Municípios selecionados / total com gap | **2.331 / 4.679** | 2.329 / 4.679 | 2.815 / 2.815 |
+| Cobertura do orçamento | **49,8%** | 49,8% | 99,96% |
+| Alunos estimados beneficiados | **255.223** | 246.563 | (não reportado) |
 
 > Com benchmark calibrado real (~R$1.939/aluno, vs R$20/aluno artificialmente
 > baixo do modelo antigo), R$500M cobre metade dos municípios com gap, não
 > quase todos. Isso é o número correto — o modelo antigo subestimava o custo
 > real por aluno em ~97x.
+>
+> A coluna "2026-07-04" é o valor anterior à correção de 2026-07-07 (quando o
+> knapsack ainda usava a constante default R$20/hab/ponto em vez do benchmark
+> calibrado ~R$19,39/hab/ponto): levemente conservador, por isso a cobertura
+> real (coluna atual) é um pouco maior.
 
 ## Reprocessamento — o que foi feito
 
@@ -89,3 +101,21 @@ FROM `tech-challenge-fase2-fiap.alfabetizacao_gold.agg_alocacao_otima`;
    `agg_vulnerabilidade_ml`, que falhavam silenciosamente antes).
 4. BigQuery recarregado: **16/16 tabelas, 0 erros**.
 5. Infraestrutura (cluster + NAT + router) deletada ao final.
+
+## Reprocessamento 2 — 2026-07-07 (só o Gold, via Cloud Shell)
+
+Silver e cache SICONFI já existiam no GCS — não foi necessário refazer
+Bronze/Silver/SICONFI, só regerar o Gold com o fix do benchmark do knapsack.
+
+1. Clonado o repo direto no Cloud Shell (`git clone`, evita duplicata de
+   script solto no home).
+2. Recriado Cloud NAT + cluster Dataproc (mesma receita).
+3. `dataproc_03_gold.py` (com `build_mart_alocacao_otima` usando o benchmark
+   calibrado via `resolve_custo_marginal_benchmark`) rodado: **16/16 marts**,
+   0 erros. Log confirmou o benchmark usado: `R$19.39/hab/ponto (~R$1939.0/aluno)`.
+4. BigQuery recarregado: **16/16 tabelas, 0 erros**.
+5. Infraestrutura deletada ao final.
+6. `scripts/verificar_numeros_publicacao.py` rodado: investimento/ROI/
+   municípios com gap bateram exato; `alunos_beneficiados` e
+   `selecionados_no_orcamento` do knapsack vieram maiores (esperado — ver
+   tabela 3 acima). Script e README atualizados com os novos valores.
