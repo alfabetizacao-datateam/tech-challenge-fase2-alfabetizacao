@@ -77,7 +77,7 @@ def greedy_knapsack(pdf, budget, value_col, cost_col):
     logger.info(f"Orcamento: R$ {budget:,.2f}")
     logger.info(f"Gasto total: R$ {total_cost:,.2f}")
     logger.info(f"Saldo nao utilizado: R$ {remaining:,.2f}")
-    logger.info(f"Valor total gerado: {total_value:.2f} pontos de alfabetizacao")
+    logger.info(f"Valor total gerado ({value_col}): {total_value:.2f}")
     logger.info(f"Municipios contemplados: {len(df_result)}")
 
     return df_result, total_cost, total_value, remaining
@@ -97,7 +97,7 @@ def optimize_with_clusters(pdf_proj, pdf_clusters, budget):
         logger.info(f"\nCluster {int(cluster_id)} — orcamento proporcional: R$ {budget_share:,.2f}")
         df_sel, tc, tv, rem = greedy_knapsack(
             subset, budget_share,
-            value_col="gap_ate_80",
+            value_col="beneficio_alunos_ate_80",
             cost_col="custo_estimado_para_atingir_80"
         )
         cluster_name = subset["nome_cluster"].iloc[0] if not subset.empty else f"Cluster {int(cluster_id)}"
@@ -105,7 +105,7 @@ def optimize_with_clusters(pdf_proj, pdf_clusters, budget):
             "cluster_nome": cluster_name,
             "orcamento_destinado": budget_share,
             "gasto_total": tc,
-            "valor_gerado_pontos": tv,
+            "alunos_beneficiados_estimados": tv,
             "municipios_contemplados": len(df_sel),
             "municipios_lista": df_sel.to_dict("records") if not df_sel.empty else []
         }
@@ -140,6 +140,15 @@ def main():
             pdf_proj["gap_ate_80"] * CUSTO_PONTO_PER_CAPITA_DEFAULT * pdf_proj["populacao_alfabetizavel_estimada"]
         )
 
+    # Beneficio em ALUNOS (nao pontos percentuais crus) — mesma formula do
+    # knapsack cloud (dataproc_03_gold.py::build_mart_alocacao_otima). Usar
+    # gap_ate_80 puro como "valor" ignora populacao e faz o ranking greedy
+    # divergir do cloud: um municipio pequeno com gap alto sobe artificialmente
+    # no local, mesmo beneficiando poucos alunos de fato.
+    pdf_proj["beneficio_alunos_ate_80"] = (
+        (pdf_proj["gap_ate_80"] / 100.0) * pdf_proj["populacao_alfabetizavel_estimada"]
+    )
+
     budget = 500_000_000
     logger.info(f"\n{'=' * 60}")
     logger.info(f"CENARIO 1: OTIMIZACAO GLOBAL — Orcamento R$ {budget:,.2f}")
@@ -147,7 +156,7 @@ def main():
 
     df_global, tc, tv, rem = greedy_knapsack(
         pdf_proj, budget,
-        value_col="gap_ate_80",
+        value_col="beneficio_alunos_ate_80",
         cost_col="custo_estimado_para_atingir_80"
     )
 
@@ -161,14 +170,14 @@ def main():
         "parametros": {
             "orcamento_total": budget,
             "metodo": "Knapsack Greedy (relacao valor/custo)",
-            "coluna_valor": "gap_ate_80 (pontos de alfabetizacao para 80%)",
+            "coluna_valor": "beneficio_alunos_ate_80 (estimativa de alunos que saem do deficit ate 80%, ver ADR-013)",
             "coluna_custo": "custo_estimado_para_atingir_80 (R$)"
         },
         "cenario_global": {
             "orcamento": budget,
             "gasto_total": float(tc),
             "saldo_nao_utilizado": float(rem),
-            "pontos_alfabetizacao_gerados": float(tv),
+            "alunos_beneficiados_estimados": float(tv),
             "municipios_contemplados": len(df_global),
             "municipios": df_global.to_dict("records") if not df_global.empty else []
         },
@@ -177,7 +186,7 @@ def main():
                 "cluster_nome": v["cluster_nome"],
                 "orcamento_destinado": float(v["orcamento_destinado"]),
                 "gasto_total": float(v["gasto_total"]),
-                "pontos_alfabetizacao_gerados": float(v["valor_gerado_pontos"]),
+                "alunos_beneficiados_estimados": float(v["alunos_beneficiados_estimados"]),
                 "municipios_contemplados": v["municipios_contemplados"]
             } for k, v in results.items()
         }

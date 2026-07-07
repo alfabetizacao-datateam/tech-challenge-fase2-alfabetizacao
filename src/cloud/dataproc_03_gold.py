@@ -375,6 +375,29 @@ def build_mart_custo_ineficiencia(df):
     return df_agg.filter(col("classificacao") == "Ineficiente").orderBy(col("custo_ineficiencia_r1").desc())
 
 
+def resolve_custo_marginal_benchmark(df_eficiencia):
+    """Deriva o benchmark de custo marginal PER CAPITA (R$/hab/ponto) — ver ADR-012.
+
+    Mediana dos municipios EFICIENTES (classificacao_eficiencia comeca com "1")
+    quando ha SICONFI; caso contrario, a constante default documentada. Usado
+    tanto por agg_projecao_investimento quanto por agg_alocacao_otima — as duas
+    marts precisam do MESMO custo por municipio para os numeros serem
+    reconciliaveis entre si (o knapsack nao pode usar um custo diferente do que
+    a projecao de investimento reporta para o mesmo municipio).
+    """
+    custo_ponto_pc = CUSTO_PONTO_PER_CAPITA_DEFAULT
+    if df_eficiencia is not None:
+        try:
+            eficientes = df_eficiencia.filter(col("classificacao_eficiencia").startswith("1"))
+            if "custo_por_ponto_alfabetizacao_medio" in df_eficiencia.columns:
+                mediana = eficientes.approxQuantile("custo_por_ponto_alfabetizacao_medio", [0.5], 0.01)
+                if mediana and mediana[0] and mediana[0] > 0:
+                    custo_ponto_pc = round(mediana[0], 2)
+        except Exception:
+            pass
+    return custo_ponto_pc
+
+
 def build_mart_projecao_investimento(df, df_eficiencia=None):
     print("MART 9: agg_projecao_investimento")
     if "gasto_por_habitante_educacao" not in df.columns:
@@ -386,20 +409,8 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
         spark_round(avg("gasto_por_habitante_educacao"), 2).alias("gasto_per_capita_medio"),
         spark_round(avg("custo_por_ponto_alfabetizacao"), 2).alias("custo_por_ponto_observado"),
     )
-    # Benchmark de custo marginal PER CAPITA (R$/hab/ponto percentual) — ver ADR-012.
-    # Derivado da mediana dos municipios EFICIENTES (melhor relacao gasto x resultado)
-    # quando ha SICONFI; caso contrario usa a constante default documentada.
     # IMPORTANTE: metrica per capita (nao despesa total) — sem distorcao de escala.
-    custo_ponto_pc = CUSTO_PONTO_PER_CAPITA_DEFAULT
-    if df_eficiencia is not None:
-        try:
-            eficientes = df_eficiencia.filter(col("classificacao_eficiencia").startswith("1"))
-            if "custo_por_ponto_alfabetizacao_medio" in df_eficiencia.columns:
-                mediana = eficientes.approxQuantile("custo_por_ponto_alfabetizacao_medio", [0.5], 0.01)
-                if mediana and mediana[0] and mediana[0] > 0:
-                    custo_ponto_pc = round(mediana[0], 2)
-        except Exception:
-            pass
+    custo_ponto_pc = resolve_custo_marginal_benchmark(df_eficiencia)
     print(f"  Benchmark custo marginal: R${custo_ponto_pc}/hab/ponto (~R${round(custo_ponto_pc*100,0)}/aluno)")
     df_agg = df_agg.withColumn("gap_ate_80", spark_round(when(lit(80.0) - col("taxa_alfabetizacao_media") < 0, lit(0)).otherwise(lit(80.0) - col("taxa_alfabetizacao_media")), 2))
     # custo = gap(pp) x custo_marginal(R$/hab/pp) x populacao_ALFABETIZAVEL(hab) => R$
@@ -532,7 +543,7 @@ def build_mart_vulnerabilidade_ml(df, tem_siconfi):
     return df_out.select(*out_cols).orderBy("nivel_vulnerabilidade", col("taxa_media").asc())
 
 
-def build_mart_alocacao_otima(df):
+def build_mart_alocacao_otima(df, df_eficiencia=None):
     """Alocacao otima sob RESTRICAO ORCAMENTARIA (Knapsack Greedy — ADR-010).
 
     Diferente de um simples ranking: ordena os municipios pela relacao
@@ -552,9 +563,14 @@ def build_mart_alocacao_otima(df):
     # populacao_total e a populacao TOTAL do municipio, nao contagem de alunos
     # do 2o ano — aplicar fracao antes de custo/beneficio em R$/alunos (ADR-013).
     df_agg = df_agg.withColumn("populacao_alfabetizavel_estimada", spark_round(col("populacao_total") * lit(FRACAO_POPULACAO_ALFABETIZAVEL), 0))
-    # Custo per capita consistente com a projecao de investimento (ADR-012)
+    # Custo per capita — MESMO benchmark de agg_projecao_investimento (ADR-012):
+    # mediana SICONFI dos municipios eficientes quando disponivel, senao o
+    # default. Antes desta correcao, esta mart usava sempre a constante default
+    # mesmo com SICONFI disponivel, divergindo (~3%) do custo reportado em
+    # agg_projecao_investimento para o mesmo municipio.
+    custo_ponto_pc = resolve_custo_marginal_benchmark(df_eficiencia)
     df_agg = df_agg.withColumn("custo_estimado",
-        spark_round(col("gap_ate_80") * lit(CUSTO_PONTO_PER_CAPITA_DEFAULT) * col("populacao_alfabetizavel_estimada"), 2))
+        spark_round(col("gap_ate_80") * lit(custo_ponto_pc) * col("populacao_alfabetizavel_estimada"), 2))
     df_agg = df_agg.filter((col("gap_ate_80") > 0) & (col("custo_estimado") > 0))
     # Beneficio ancorado na MESMA meta do custo (80%), nao nos 100% do deficit_total.
     # deficit_total (base 100%) e custo_estimado (base 80%) misturavam referencias
@@ -760,7 +776,6 @@ def run_gold(spark, silver_dir, gold_dir):
     marts["agg_top10_uf"] = safe_build("agg_top10_uf", build_mart_top10_uf, df)
     marts["agg_clusters_municipios"] = safe_build("agg_clusters_municipios", build_mart_clusters_municipios, df)
     marts["agg_vulnerabilidade_ml"] = safe_build("agg_vulnerabilidade_ml", build_mart_vulnerabilidade_ml, df, tem_siconfi)
-    marts["agg_alocacao_otima"] = safe_build("agg_alocacao_otima", build_mart_alocacao_otima, df)
 
     marts["agg_qualidade_resumo"] = safe_build("agg_qualidade_resumo", build_mart_qualidade_resumo, df)
 
@@ -772,10 +787,16 @@ def run_gold(spark, silver_dir, gold_dir):
         mart9 = safe_build("agg_projecao_investimento", build_mart_projecao_investimento, df, df_eficiencia=mart7)
         marts["agg_projecao_investimento"] = mart9
 
+        # df_eficiencia=mart7 garante que o knapsack usa o MESMO benchmark de
+        # custo marginal (calibrado via SICONFI) que agg_projecao_investimento —
+        # antes desta correcao, esta mart sempre usava a constante default.
+        marts["agg_alocacao_otima"] = safe_build("agg_alocacao_otima", build_mart_alocacao_otima, df, df_eficiencia=mart7)
+
         marts["agg_correlacoes_uf"] = safe_build("agg_correlacoes_uf", build_mart_correlacoes_uf, df)
         marts["agg_roi_executivo"] = safe_build("agg_roi_executivo", build_mart_roi_executivo, df, mart_custo=mart8, mart_investimento=mart9)
         marts["agg_alocacao_otima_estrategias"] = safe_build("agg_alocacao_otima_estrategias", build_mart_alocacao_otima_estrategias, df, mart_projecao=mart9)
     else:
+        marts["agg_alocacao_otima"] = safe_build("agg_alocacao_otima", build_mart_alocacao_otima, df)
         print("SICONFI não disponível — marts financeiros e correlações pulados (usando placeholders vazios)")
         empty_schema = df.select("id_municipio", "sigla_uf").limit(0)
         for name in ["agg_eficiencia_financeira", "agg_custo_ineficiencia", "agg_projecao_investimento",
