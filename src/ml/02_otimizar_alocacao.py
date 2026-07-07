@@ -7,6 +7,14 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("MLOptimization")
 
+# Modelo de custo per capita (ver ADR-012/ADR-013). Usado apenas no fallback
+# abaixo, quando agg_projecao_investimento nao existe localmente — precisa
+# ficar em sincronia manual com as mesmas constantes em src/gold/01_gerar_marts_gold.py
+# e src/cloud/dataproc_03_gold.py. Sem a fracao alfabetizavel, o custo usa
+# populacao TOTAL do municipio (nao alunos) e infla o resultado em ~77x.
+CUSTO_PONTO_PER_CAPITA_DEFAULT = 20.0  # R$/habitante/ponto percentual (ADR-012)
+FRACAO_POPULACAO_ALFABETIZAVEL = 0.013  # coorte de idade unica ~7 anos (ADR-013)
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
 hadoop_home = os.path.join(project_root, "hadoop")
@@ -118,11 +126,18 @@ def main():
 
     pdf_proj = load_projecao(gold_dir)
     if pdf_proj is None:
-        logger.warning("Projecao de investimento nao encontrada. Usando dados dos clusters.")
+        logger.warning(
+            "Projecao de investimento nao encontrada. Usando dados dos clusters "
+            f"com benchmark default (R${CUSTO_PONTO_PER_CAPITA_DEFAULT}/hab/ponto) — "
+            "rode 01_gerar_marts_gold.py antes para usar o benchmark calibrado via SICONFI."
+        )
         pdf_proj = pdf_clusters.copy()
         pdf_proj["gap_ate_80"] = (80 - pdf_proj["taxa_alfabetizacao_media"]).clip(lower=0)
+        pdf_proj["populacao_alfabetizavel_estimada"] = (
+            pdf_proj["populacao_total"] * FRACAO_POPULACAO_ALFABETIZAVEL
+        )
         pdf_proj["custo_estimado_para_atingir_80"] = (
-            pdf_proj["gap_ate_80"] * 200 * (pdf_proj["populacao_total"] / 1000)
+            pdf_proj["gap_ate_80"] * CUSTO_PONTO_PER_CAPITA_DEFAULT * pdf_proj["populacao_alfabetizavel_estimada"]
         )
 
     # Beneficio em ALUNOS (nao pontos percentuais crus) — mesma formula do
