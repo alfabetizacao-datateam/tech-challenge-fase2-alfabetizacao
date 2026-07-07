@@ -124,7 +124,7 @@ def build_mart_uf_indicadores(df):
         spark_round(percentile_approx("taxa_alfabetizacao", 0.5), 2).alias("taxa_alfabetizacao_mediana"),
         spark_round(min("taxa_alfabetizacao"), 2).alias("taxa_min"),
         spark_round(max("taxa_alfabetizacao"), 2).alias("taxa_max"),
-        count("id_municipio").alias("qtd_municipios_analisados"),
+        countDistinct("id_municipio").alias("qtd_municipios_analisados"),
         spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado"),
         spark_round(avg("media_portugues"), 2).alias("media_portugues_media"),
     )
