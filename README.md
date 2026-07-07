@@ -35,7 +35,9 @@ Resumo por camada:
 |---|---|---|
 | **Bronze** | Dados brutos — Indicador de Alfabetização, IBGE, SICONFI (cache API), microdados SAEB, eventos simulados | `src/batch/`, `src/siconfi/`, `src/streaming/` |
 | **Silver** | *One Big Table* (`alfabetizacao_municipios_obt`) — join com IBGE, enriquecimento SICONFI, metas imputadas via KNN, integração de microdados | `src/batch/02_silver_transform.py`, `src/features/02_imputar_metas_knn.py` |
-| **Gold** | 16 marts analíticos particionados por `ano` — executivos, priorização, financeiro, IA/ML, correlações | `src/gold/01_gerar_marts_gold.py` (local), `src/cloud/dataproc_03_gold.py` (produção) |
+| **Gold** | 16 marts analíticos particionados por `ano` — executivos, priorização, financeiro, IA/ML, correlações | `src/cloud/dataproc_03_gold.py` (produção, 16/16 marts) |
+
+> **Local vs. produção não têm paridade total de marts.** `src/gold/01_gerar_marts_gold.py` gera 9 dos 16 marts (os executivos/financeiros); clustering e alocação orçamentária rodam como scripts separados em `src/ml/` (`01_clusterizar_municipios.py`, `02_otimizar_alocacao.py`), que não produzem `agg_evolucao_temporal`, `agg_correlacoes_uf`, `agg_roi_executivo`, `agg_alocacao_otima_estrategias` nem `agg_qualidade_resumo` — esses só existem no pipeline cloud. Isso é uma divisão de arquitetura válida (local = dev/exploração em amostra, cloud = produção), não um bug, mas os números que aparecem no README vêm sempre do BigQuery (produção), nunca da execução local.
 
 ## Fluxo de dados
 

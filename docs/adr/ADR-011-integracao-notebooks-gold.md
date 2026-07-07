@@ -4,6 +4,8 @@
 - **Status:** Accepted
 - **Decisão:** Elevar análises de notebooks (camada exploratória) para Gold Marts (camada de produção)
 
+> **Nota de atualização (2026-07-07):** a decisão de elevar as 4 análises para marts continua válida. O valor "ROI 19,4× nacional" citado abaixo é do modelo de custo pré-ADR-012/ADR-013 — o valor atual, verificado contra produção, é **28,69×** (ver `docs/adr/ADR-013-fracao-populacao-alfabetizavel.md` e `docs/NUMEROS_RECALCULADOS.md`). A métrica em si (`roi_fator` em `agg_roi_executivo`) não mudou de definição, só o número.
+
 ---
 
 ## 1. Contexto

@@ -5,6 +5,8 @@
 - **Decisores:** Luiz Maibashi (Principal) + Renan (revisão)
 - **Impacto:** ALTA | **ROI:** 8.3x (vide README — Evidências Econômicas)
 
+> **Nota de atualização (2026-07-07):** a decisão (Medalhão vs One-Shot) continua válida e não muda. Mas os artefatos citados abaixo desatualizaram com a evolução do projeto: `CLAUDE.md` e `DICIONARIO_DADOS.md` nunca existiram/foram removidos (ver `AGENTS.md` e o próprio README), o script Gold local é `src/gold/01_gerar_marts_gold.py` (não `03_gold_aggregation.py`), e a contagem de marts/linhas ("11 marts", "23.995 rows") reflete um estágio inicial — produção atual tem 16 marts sobre 5.550 municípios. Ver `docs/NUMEROS_RECALCULADOS.md` para os números correntes.
+
 ---
 
 ## 1. CONTEXTO (O QUÊ?)
