@@ -63,11 +63,19 @@ def build_features(df):
         F.round(F.avg("custo_por_ponto_alfabetizacao"), 2).alias("custo_por_ponto_alfabetizacao_medio"),
     ).toPandas()
 
-    pdf["deficit_log"] = np.log1p(pdf["deficit_absoluto_proxy"].fillna(1))
+    # deficit_per_capita (nao deficit_log) evita dupla contagem de escala: deficit_absoluto_proxy
+    # ja correlaciona 0.955 com populacao_total, entao usar log(deficit) + log(populacao) como
+    # features separadas conta o tamanho do municipio duas vezes na distancia do K-Means.
+    # Identico a dataproc_03_gold.py::build_mart_vulnerabilidade_ml (deficit_per_capita + log_populacao).
+    pdf["deficit_per_capita"] = np.where(
+        pdf["populacao_total"] > 0,
+        pdf["deficit_absoluto_proxy"].fillna(0) / pdf["populacao_total"],
+        0.0,
+    )
     pdf["populacao_log"] = np.log1p(pdf["populacao_total"].fillna(1))
     pdf["gasto_per_capita_medio"] = pdf["gasto_per_capita_medio"].fillna(pdf["gasto_per_capita_medio"].median())
 
-    feature_cols = ["taxa_alfabetizacao_media", "gasto_per_capita_medio", "deficit_log", "populacao_log"]
+    feature_cols = ["taxa_alfabetizacao_media", "gasto_per_capita_medio", "deficit_per_capita", "populacao_log"]
     logger.info(f"Features para clustering: {feature_cols}")
     logger.info(f"Total municipios: {len(pdf)}")
     return pdf, feature_cols
@@ -93,7 +101,7 @@ def run_clustering(pdf, feature_cols, k=4):
     for i in range(k):
         logger.info(f"  Cluster {i}: centroide [{feature_cols[0]}={centers[i][0]:.1f}, "
                     f"{feature_cols[1]}={centers[i][1]:.0f}, "
-                    f"deficit_log={centers[i][2]:.1f}, pop_log={centers[i][3]:.1f}]")
+                    f"deficit_per_capita={centers[i][2]:.4f}, pop_log={centers[i][3]:.1f}]")
 
     return pdf, labels, kmeans, scaler, sil
 
@@ -104,8 +112,9 @@ def profile_clusters(pdf):
         taxa_media=("taxa_alfabetizacao_media", "mean"),
         gasto_medio=("gasto_per_capita_medio", "mean"),
         deficit_medio=("deficit_absoluto_proxy", "mean"),
+        deficit_pc_medio=("deficit_per_capita", "mean"),
         populacao_media=("populacao_total", "mean"),
-    ).round(2).sort_values("cluster")
+    ).round(4).sort_values("cluster")
 
     logger.info("\nPerfil dos clusters:")
     logger.info(cluster_profile.to_string())
@@ -116,7 +125,8 @@ def profile_clusters(pdf):
         alta_taxa = row["taxa_media"] >= pdf["taxa_alfabetizacao_media"].median()
         alto_gasto = row["gasto_medio"] >= pdf["gasto_per_capita_medio"].median()
         grande_porte = row["populacao_media"] >= pdf["populacao_total"].median()
-        alto_deficit = row["deficit_medio"] >= pdf["deficit_absoluto_proxy"].median()
+        # deficit per capita (nao absoluto) — mesma base usada como feature do K-Means
+        alto_deficit = row["deficit_pc_medio"] >= pdf["deficit_per_capita"].median()
 
         if not alta_taxa and alto_gasto and not alto_deficit:
             nome = f"{c} - Ineficiente (Gasto alto, resultado baixo)"
@@ -125,7 +135,7 @@ def profile_clusters(pdf):
         elif not alta_taxa and not alto_gasto and not alto_deficit:
             nome = f"{c} - Subinvestido (Baixa taxa, baixo gasto)"
         elif alta_taxa and not alto_gasto:
-            nome = f"{c} - Eficiente (Alta taxa, gasto控制ado)"
+            nome = f"{c} - Eficiente (Alta taxa, gasto controlado)"
         elif alta_taxa and alto_gasto:
             nome = f"{c} - Alto Gasto (Alta taxa, alto gasto)"
         elif alta_taxa and grande_porte and alto_deficit:
