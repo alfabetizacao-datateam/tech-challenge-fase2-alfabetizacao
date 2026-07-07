@@ -2,6 +2,8 @@
 
 - **Status:** ACCEPTED | **Data:** 2026-05-18 | **Risco:** MÉDIO | **Limitação Explícita:** Sim
 
+> **Nota de atualização (2026-07-07):** o algoritmo (KNN K=5 por UF) continua válido. A implementação real está em `src/features/02_imputar_metas_knn.py` (script dedicado), não em `02_silver_transform.py` como o texto abaixo descreve — refatoração posterior à escrita deste ADR. Ver README, seção "Fluxo de dados".
+
 ---
 
 ## 1. CONTEXTO
