@@ -6,7 +6,7 @@ import urllib.error
 import concurrent.futures
 import pandas as pd
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, round as spark_round
+from pyspark.sql.functions import col, round as spark_round, when, lit
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -135,9 +135,17 @@ def enrich_silver_with_siconfi(
             "gasto_por_habitante_educacao",
             spark_round(col("despesa_educacao") / col("populacao_total"), 2),
         )
+        # Custo por ponto PER CAPITA (R$/hab/ponto): usa gasto_por_habitante (nao a
+        # despesa total) para evitar distorcao de escala populacional — ver ADR-012.
+        # Precisa bater com src/cloud/dataproc_04_siconfi.py (mesma formula).
         df_enriched = df_enriched.withColumn(
             "custo_por_ponto_alfabetizacao",
-            spark_round(col("despesa_educacao") / (col("taxa_alfabetizacao") + 1), 2),
+            spark_round(
+                when(col("taxa_alfabetizacao").isNotNull(),
+                     col("gasto_por_habitante_educacao") / (col("taxa_alfabetizacao") + 1))
+                .otherwise(lit(None)),
+                2
+            ),
         )
 
     logger.info(f"Salvando OBT enriquecida em: {output_path}")
