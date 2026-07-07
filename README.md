@@ -105,11 +105,11 @@ A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado
 | Investimento total estimado | R$ 1.218,3 milhões |
 | Desperdício por ineficiência de gasto | R$ 34,96 bilhões |
 | ROI nacional (desperdício ÷ investimento necessário) | 28,69× |
-| Cobertura do orçamento de R$500M (Knapsack) | 49,8% dos municípios com gap · ~246.563 alunos beneficiados |
+| Cobertura do orçamento de R$500M (Knapsack) | 49,8% dos municípios com gap (2.331/4.679) · ~255.223 alunos beneficiados |
 
 > **Nota de escopo:** "desperdício" mede ineficiência de gasto educacional total (base: população do município); "investimento necessário" mede o custo específico de fechar o gap de alfabetização (base: fração alfabetizável, ADR-013). São dois recortes de gasto diferentes — a razão entre eles (28,69×) é uma leitura de "quanto já se desperdiça hoje vs. quanto seria preciso investir", não uma comparação de mesma base populacional.
 >
-> Números confirmados direto no BigQuery de produção em 2026-07-06 via `scripts/verificar_numeros_publicacao.py` — todas as métricas bateram exatamente com os valores acima. Rode o script de novo se os dados forem reprocessados no futuro.
+> Números confirmados direto no BigQuery de produção em 2026-07-07 via `scripts/verificar_numeros_publicacao.py`, após reprocessar o Gold com o benchmark de custo calibrado via SICONFI também no knapsack (`agg_alocacao_otima`) — antes desse fix, o knapsack usava a constante default (R$20/hab/ponto) em vez do valor real (~R$19,39/hab/ponto), o que subestimava levemente a cobertura (2.329→2.331 municípios, 246.563→255.223 alunos). Investimento, desperdício e ROI não mudaram (não dependiam desse benchmark). Rode o script de novo se os dados forem reprocessados no futuro.
 
 ## Estrutura do repositório
 
