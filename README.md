@@ -35,9 +35,11 @@ Resumo por camada:
 |---|---|---|
 | **Bronze** | Dados brutos — Indicador de Alfabetização, IBGE, SICONFI (cache API), microdados SAEB, eventos simulados | `src/batch/`, `src/siconfi/`, `src/streaming/` |
 | **Silver** | *One Big Table* (`alfabetizacao_municipios_obt`) — join com IBGE, enriquecimento SICONFI, metas imputadas via KNN, integração de microdados | `src/batch/02_silver_transform.py`, `src/features/02_imputar_metas_knn.py` |
-| **Gold** | 16 marts analíticos particionados por `ano` — executivos, priorização, financeiro, IA/ML, correlações | `src/cloud/dataproc_03_gold.py` (produção, 16/16 marts) |
+| **Gold** | 15 marts analíticos particionados por `ano` — executivos, priorização, financeiro, IA/ML, correlações | `src/cloud/dataproc_03_gold.py` (produção, 15/15 marts) |
 
-> **Local vs. produção não têm paridade total de marts.** `src/gold/01_gerar_marts_gold.py` gera 9 dos 16 marts (os executivos/financeiros); clustering e alocação orçamentária rodam como scripts separados em `src/ml/` (`01_clusterizar_municipios.py`, `02_otimizar_alocacao.py`), que não produzem `agg_evolucao_temporal`, `agg_correlacoes_uf`, `agg_roi_executivo`, `agg_alocacao_otima_estrategias` nem `agg_qualidade_resumo` — esses só existem no pipeline cloud. Isso é uma divisão de arquitetura válida (local = dev/exploração em amostra, cloud = produção), não um bug, mas os números que aparecem no README vêm sempre do BigQuery (produção), nunca da execução local.
+> **Local vs. produção não têm paridade total de marts.** `src/gold/01_gerar_marts_gold.py` gera 9 dos 15 marts (os executivos/financeiros); clustering e alocação orçamentária rodam como scripts separados em `src/ml/` (`01_clusterizar_municipios.py`, `02_otimizar_alocacao.py`), que não produzem `agg_evolucao_temporal`, `agg_correlacoes_uf`, `agg_roi_executivo`, `agg_alocacao_otima_estrategias` nem `agg_qualidade_resumo` — esses só existem no pipeline cloud. Isso é uma divisão de arquitetura válida (local = dev/exploração em amostra, cloud = produção), não um bug, mas os números que aparecem no README vêm sempre do BigQuery (produção), nunca da execução local.
+>
+> **Priorização vs. IA/ML não são redundantes.** `agg_priorizacao` (regras + mediana, ADR-009) devolve uma **ordem** — ranking de urgência com peso de equidade fiscal (metrópoles pesam menos por terem capacidade própria de arrecadação); `agg_vulnerabilidade_ml` (K-Means, ADR-014) devolve um **perfil** — a que grupo o município pertence, de forma data-driven, sem esse julgamento de política pública embutido. Um mart de clustering por regras que duplicava essa função (`agg_clusters_municipios`) foi removido em 2026-07-08 (ver ADR-014) em favor do K-Means, que é o único citado na seção "Aplicação em IA" abaixo.
 
 ## Fluxo de dados
 
@@ -91,11 +93,15 @@ Implementado em `src/data_quality/` (dois scripts, ~650 linhas): verificação d
 
 ## Aplicação em IA
 
-A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado:
+A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado. **Em produção hoje** (roda no Dataproc, alimenta o BigQuery):
 
-- **Modelos de predição de alfabetização** — `src/ml/03_modelo_preditivo_risco.py`: RandomForestClassifier prevê risco (`taxa < 75%`) usando só features de **contexto** (população, gasto per capita, região) — exclui deliberadamente proficiência SAEB como feature para evitar vazamento de dado (a proficiência é, na prática, a própria definição de alfabetização).
-- **Análise de desigualdade educacional** — `agg_vulnerabilidade_ml` (K-Means, k=4) segmenta municípios por vulnerabilidade combinando taxa, déficit per capita, população (escala log) e gasto; `agg_correlacoes_uf` mede correlação de Pearson gasto×taxa por UF.
+- **Análise de desigualdade educacional** — `agg_vulnerabilidade_ml` (K-Means, k=4) segmenta municípios por vulnerabilidade combinando taxa, **déficit per capita** (métrica de referência — nunca déficit absoluto bruto, que carrega viés de escala populacional, ver [ADR-015](docs/adr/ADR-015-auditoria-deficit-per-capita-e-status-ml.md)), população (escala log) e gasto; `agg_correlacoes_uf` mede correlação de Pearson gasto×taxa **por UF** (corrigido no ADR-015 — antes calculava a correlação nacional uma vez e repetia o mesmo número em toda UF).
 - **Políticas públicas baseadas em dados** — `agg_projecao_investimento`, `agg_roi_executivo` e `agg_alocacao_otima` convertem o gap de alfabetização em custo estimado (R$) e usam um Knapsack Greedy para priorizar municípios sob um orçamento hipotético de R$500M ([ADR-010](docs/adr/ADR-010-knapsack.md), [ADR-012](docs/adr/ADR-012-modelo-custo-marginal.md), [ADR-013](docs/adr/ADR-013-fracao-populacao-alfabetizavel.md)).
+
+**Protótipos validados, não em produção** (ver [ADR-015](docs/adr/ADR-015-auditoria-deficit-per-capita-e-status-ml.md) para o racional completo):
+
+- **Modelos de predição de alfabetização** — `src/ml/03_modelo_preditivo_risco.py`: RandomForestClassifier prevê risco (`taxa < 75%`) usando só features de **contexto** (população, gasto per capita, região) — exclui deliberadamente proficiência SAEB como feature para evitar vazamento de dado. Tecnicamente sólido (split estratificado, accuracy/precision/recall/F1/ROC-AUC, regularizado) mas nunca rodou contra a base de produção completa — mantido como protótipo pronto para escalar, não integrado à esteira BigQuery nesta entrega (não alimenta nenhum outro mart, diferente do KNN abaixo).
+- **KNN de imputação de metas** (`src/features/02_imputar_metas_knn.py`, [ADR-004](docs/adr/ADR-004-knn-metas.md)) — cobre o gap real de metas oficiais (só a rede Municipal tem meta do PDE; Estadual/Federal/Privada ficam NULL sem a imputação, afetando `gap_meta` em ~56% dos registros hoje). Já grava no path que `dataproc_03_gold.py` lê automaticamente — sem trabalho de integração pendente. Ganhou validação por holdout (MAE/RMSE contra municípios com meta conhecida, salva em `metrics_knn_imputacao.json`) nesta auditoria; falta rodar contra produção e revisar o número antes de promover com confiança.
 
 **Números de referência** (dataset de produção, 5.550 municípios, via BigQuery — ver [`docs/NUMEROS_RECALCULADOS.md`](docs/NUMEROS_RECALCULADOS.md) para a auditoria completa):
 

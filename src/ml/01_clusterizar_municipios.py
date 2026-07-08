@@ -54,11 +54,15 @@ def load_unified_data(spark, silver_dir):
 
 
 def build_features(df):
+    # deficit_absoluto_proxy: AVG entre linhas (ano x rede), nao SUM — cada
+    # linha usa a populacao TOTAL do municipio (ver 02_silver_transform.py),
+    # somar entre redes/anos contaria essa populacao varias vezes (ate 3x por
+    # rede reportada). Ver ADR-015.
     pdf = df.groupBy("id_municipio", "sigla_uf").agg(
         F.max("nome_municipio").alias("nome_municipio"),
         F.round(F.avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
         F.round(F.avg("populacao_total"), 0).alias("populacao_total"),
-        F.round(F.sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        F.round(F.avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         F.round(F.avg("gasto_por_habitante_educacao"), 2).alias("gasto_per_capita_medio"),
         F.round(F.avg("custo_por_ponto_alfabetizacao"), 2).alias("custo_por_ponto_alfabetizacao_medio"),
     ).toPandas()

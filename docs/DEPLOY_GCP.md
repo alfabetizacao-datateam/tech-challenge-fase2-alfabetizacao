@@ -64,7 +64,7 @@ FROM `tech-challenge-fase2-fiap.alfabetizacao_gold.agg_alocacao_otima`;
 5. Ordenar por `taxa_alfabetizacao_media` desc
 
 **Páginas 2-4 (planejadas):**
-- **Página 2 — Vulnerabilidade:** fonte prevista era `agg_vulnerabilidade_ml` (faltando — usar `agg_clusters_municipios` como substituto, 5.550 linhas). Scatter: X=`taxa_alfabetizacao`, Y=`deficit_absoluto_proxy`, cor=`cluster`.
+- **Página 2 — Vulnerabilidade:** fonte `agg_vulnerabilidade_ml` (K-Means, ADR-014 — mart substituto `agg_clusters_municipios` foi removido em 2026-07-08). Scatter: X=`taxa_media`, Y=`deficit_per_capita` (métrica de referência — não `deficit_absoluto_medio`, que mistura escala populacional), cor=`nivel_vulnerabilidade`.
 - **Página 3 — ROI Executivo (tese central):** fonte `agg_roi_executivo` (26 linhas). Barras horizontais por `sigla_uf`, métrica `roi_fator` desc. Insight: `roi_fator > 1` = desperdício por ineficiência cobre o investimento necessário (problema de gestão, não de verba).
 - **Página 4 — Alocação Ótima:** fonte `agg_alocacao_otima` (4.679 linhas). Tabela top 20 filtrada por `selecionado_no_orcamento = true`.
 

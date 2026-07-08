@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import logging
 import numpy as np
 import pandas as pd
@@ -77,6 +78,54 @@ def etapa1_propagar_meta_por_municipio(spark, silver_path, output_path):
     return df_com_propagacao
 
 
+def validar_knn_holdout(pdf_ref, k=K_NEIGHBORS, frac_holdout=0.2, seed=RANDOM_STATE):
+    """Valida o KNN antes de confiar na cobertura reportada (achado da auditoria
+    de 2026-07-07: script nunca teve MAE/holdout, so estatistica descritiva do
+    output). Esconde a meta de uma fracao dos municipios COM meta conhecida,
+    prediz via o mesmo KNN por UF, e mede o erro contra o valor real — ver ADR-015.
+    """
+    rng = np.random.RandomState(seed)
+    idx_holdout = pdf_ref.sample(frac=frac_holdout, random_state=rng).index
+    pdf_holdout = pdf_ref.loc[idx_holdout].copy()
+    pdf_referencia_reduzida = pdf_ref.drop(index=idx_holdout)
+
+    def prever(row, referencia):
+        uf = row["sigla_uf"]
+        ref_uf = referencia[referencia["sigla_uf"] == uf]
+        if len(ref_uf) < 3:
+            ref_uf = referencia
+        if len(ref_uf) == 0:
+            return np.nan
+        X_ref = ref_uf[["taxa_media", "populacao", "deficit_total"]].values
+        y_ref = ref_uf["meta"].values
+        X_target = np.array([[row["taxa_media"], row["populacao"], row["deficit_total"]]])
+        scaler = MinMaxScaler()
+        X_ref_scaled = scaler.fit_transform(X_ref)
+        X_target_scaled = scaler.transform(X_target)
+        knn = KNeighborsRegressor(n_neighbors=min(k, len(ref_uf)), weights="distance")
+        knn.fit(X_ref_scaled, y_ref)
+        return knn.predict(X_target_scaled)[0]
+
+    pdf_holdout["meta_prevista"] = pdf_holdout.apply(
+        lambda r: prever(r, pdf_referencia_reduzida), axis=1
+    )
+    validos = pdf_holdout.dropna(subset=["meta_prevista"])
+    erro_abs = (validos["meta"] - validos["meta_prevista"]).abs()
+    mae = erro_abs.mean()
+    rmse = np.sqrt((erro_abs ** 2).mean())
+
+    logger.info("=" * 60)
+    logger.info("VALIDACAO KNN (holdout — municipios com meta conhecida)")
+    logger.info("=" * 60)
+    logger.info(f"  Holdout: {len(validos)}/{len(pdf_holdout)} municipios avaliados")
+    logger.info(f"  MAE:  {mae:.2f} pontos percentuais")
+    logger.info(f"  RMSE: {rmse:.2f} pontos percentuais")
+    logger.info(f"  Meta real media no holdout: {validos['meta'].mean():.1f}%")
+    if mae > 10:
+        logger.warning(f"  MAE > 10pp — imputacao pouco confiavel, revisar features/k antes de usar em producao.")
+    return {"mae": round(float(mae), 2), "rmse": round(float(rmse), 2), "n_holdout": int(len(validos))}
+
+
 def etapa2_knn_imputacao(spark, df):
     logger.info("=" * 60)
     logger.info("ETAPA 2: Imputacao KNN ponderada para municipios sem meta")
@@ -84,15 +133,19 @@ def etapa2_knn_imputacao(spark, df):
 
     if df.filter(col("meta_alfabetizacao_2024_imputada").isNull()).count() == 0:
         logger.info("  Nenhum municipio sem meta — KNN nao necessario.")
-        return df.drop("meta_por_municipio")
+        return df.drop("meta_por_municipio"), None
 
+    # deficit_total: AVG entre linhas (ano x rede), nao SUM — cada linha usa a
+    # populacao TOTAL do municipio (ver 02_silver_transform.py), somar entre
+    # redes/anos contaria essa populacao varias vezes e distorceria a feature
+    # usada pelo KNN (ver ADR-015).
     logger.info("  Agregando municipios-alvo (sem meta)...")
     df.createOrReplaceTempView("vw_full")
     df_target = spark.sql("""
         SELECT id_municipio, nome_municipio, sigla_uf,
                ROUND(AVG(taxa_alfabetizacao), 2) as taxa_media,
                ROUND(AVG(populacao_total), 0) as populacao,
-               ROUND(SUM(deficit_absoluto_proxy), 0) as deficit_total
+               ROUND(AVG(deficit_absoluto_proxy), 0) as deficit_total
         FROM vw_full
         WHERE meta_alfabetizacao_2024_imputada IS NULL
         GROUP BY id_municipio, nome_municipio, sigla_uf
@@ -105,7 +158,7 @@ def etapa2_knn_imputacao(spark, df):
         SELECT id_municipio, sigla_uf,
                ROUND(AVG(taxa_alfabetizacao), 2) as taxa_media,
                ROUND(AVG(populacao_total), 0) as populacao,
-               ROUND(SUM(deficit_absoluto_proxy), 0) as deficit_total,
+               ROUND(AVG(deficit_absoluto_proxy), 0) as deficit_total,
                ROUND(AVG(meta_alfabetizacao_2024_imputada), 2) as meta
         FROM vw_full
         WHERE meta_alfabetizacao_2024_imputada IS NOT NULL
@@ -113,6 +166,8 @@ def etapa2_knn_imputacao(spark, df):
     """)
     pdf_ref = df_ref.toPandas()
     logger.info(f"  Municipios de referencia: {len(pdf_ref)}")
+
+    metricas_validacao = validar_knn_holdout(pdf_ref)
 
     def knn_predict_por_uf(row, referencia, k=K_NEIGHBORS):
         uf = row["sigla_uf"]
@@ -170,7 +225,7 @@ def etapa2_knn_imputacao(spark, df):
         ).otherwise(col("meta_alfabetizacao_2024_imputada"))
     ).drop("meta_knn")
 
-    return df_final
+    return df_final, metricas_validacao
 
 
 def run_imputacao():
@@ -184,7 +239,13 @@ def run_imputacao():
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     df_propagado = etapa1_propagar_meta_por_municipio(spark, silver_path, output_path)
-    df_final = etapa2_knn_imputacao(spark, df_propagado)
+    df_final, metricas_validacao = etapa2_knn_imputacao(spark, df_propagado)
+
+    if metricas_validacao is not None:
+        metrics_path = os.path.join(os.path.dirname(output_path), "metrics_knn_imputacao.json")
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(metricas_validacao, f, ensure_ascii=False, indent=2)
+        logger.info(f"  Metricas de validacao salvas em: {metrics_path}")
 
     total = df_final.count()
     com_meta = df_final.filter(col("meta_alfabetizacao_2024_imputada").isNotNull()).count()
