@@ -101,7 +101,7 @@ A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado
 **Protótipos validados, não em produção** (ver [ADR-015](docs/adr/ADR-015-auditoria-deficit-per-capita-e-status-ml.md) para o racional completo):
 
 - **Modelos de predição de alfabetização** — `src/ml/03_modelo_preditivo_risco.py`: RandomForestClassifier prevê risco (`taxa < 75%`) usando só features de **contexto** (população, gasto per capita, região) — exclui deliberadamente proficiência SAEB como feature para evitar vazamento de dado. Tecnicamente sólido (split estratificado, accuracy/precision/recall/F1/ROC-AUC, regularizado) mas nunca rodou contra a base de produção completa — mantido como protótipo pronto para escalar, não integrado à esteira BigQuery nesta entrega (não alimenta nenhum outro mart, diferente do KNN abaixo).
-- **KNN de imputação de metas** (`src/features/02_imputar_metas_knn.py`, [ADR-004](docs/adr/ADR-004-knn-metas.md)) — cobre o gap real de metas oficiais (só a rede Municipal tem meta do PDE; Estadual/Federal/Privada ficam NULL sem a imputação, afetando `gap_meta` em ~56% dos registros hoje). Já grava no path que `dataproc_03_gold.py` lê automaticamente — sem trabalho de integração pendente. Ganhou validação por holdout (MAE/RMSE contra municípios com meta conhecida, salva em `metrics_knn_imputacao.json`) nesta auditoria; falta rodar contra produção e revisar o número antes de promover com confiança.
+- **KNN de imputação de metas** (`src/cloud/dataproc_05_knn_metas.py`, [ADR-004](docs/adr/ADR-004-knn-metas.md)) — cobre o gap real de metas oficiais (só a rede Municipal tem meta do PDE; Estadual/Federal/Privada ficavam NULL sem a imputação). **Em produção desde 2026-07-08**: cobertura 43,6% → 100%, validado por holdout com MAE 5,12pp/RMSE 7,26pp (ver ADR-015). Escreve no path que `dataproc_03_gold.py` lê automaticamente — sem trabalho de integração pendente.
 
 **Números de referência** (dataset de produção, 5.550 municípios, via BigQuery — ver [`docs/NUMEROS_RECALCULADOS.md`](docs/NUMEROS_RECALCULADOS.md) para a auditoria completa):
 
@@ -111,11 +111,11 @@ A camada Gold foi desenhada para alimentar três usos de IA citados no enunciado
 | Investimento total estimado | R$ 1.218,3 milhões |
 | Desperdício por ineficiência de gasto | R$ 34,96 bilhões |
 | ROI nacional (desperdício ÷ investimento necessário) | 28,69× |
-| Cobertura do orçamento de R$500M (Knapsack) | 49,8% dos municípios com gap (2.331/4.679) · ~255.223 alunos beneficiados |
+| Cobertura do orçamento de R$500M (Knapsack) | 49,9% dos municípios com gap (2.334/4.679) · ~254.186 alunos beneficiados |
 
 > **Nota de escopo:** "desperdício" mede ineficiência de gasto educacional total (base: população do município); "investimento necessário" mede o custo específico de fechar o gap de alfabetização (base: fração alfabetizável, ADR-013). São dois recortes de gasto diferentes — a razão entre eles (28,69×) é uma leitura de "quanto já se desperdiça hoje vs. quanto seria preciso investir", não uma comparação de mesma base populacional.
 >
-> Números confirmados direto no BigQuery de produção em 2026-07-07 via `scripts/verificar_numeros_publicacao.py`, após reprocessar o Gold com o benchmark de custo calibrado via SICONFI também no knapsack (`agg_alocacao_otima`) — antes desse fix, o knapsack usava a constante default (R$20/hab/ponto) em vez do valor real (~R$19,39/hab/ponto), o que subestimava levemente a cobertura (2.329→2.331 municípios, 246.563→255.223 alunos). Investimento, desperdício e ROI não mudaram (não dependiam desse benchmark). Rode o script de novo se os dados forem reprocessados no futuro.
+> Números confirmados direto no BigQuery de produção em 2026-07-08 via `scripts/verificar_numeros_publicacao.py`, após o reprocessamento final (KNN de metas em produção pela primeira vez + fix de `deficit_per_capita` em 10 pontos do pipeline, ver ADR-014/ADR-015) — pequena variação na cobertura do knapsack (2.331→2.334 municípios) vem da cobertura de `gap_meta` ter ido a 100% após o KNN. Investimento, desperdício e ROI não mudaram (não dependem de `deficit_absoluto_proxy` nem de `gap_meta`). Rode o script de novo se os dados forem reprocessados no futuro.
 
 ## Estrutura do repositório
 

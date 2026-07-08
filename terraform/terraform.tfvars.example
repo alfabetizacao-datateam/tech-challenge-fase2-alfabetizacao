@@ -1,6 +1,11 @@
 # Copie este arquivo para terraform.tfvars e preencha com seus valores reais
 # NUNCA commite terraform.tfvars (já está no .gitignore)
+#
+# ATENCAO: confirme o nome do bucket real do projeto antes de usar o default
+# abaixo — em 2026-07-08 esse valor estava desatualizado (bucket nao existia)
+# e causou confusao real durante o reprocessamento. Verifique com:
+#   gcloud storage buckets list --project=SEU_PROJECT_ID
 
 project_id  = "tech-challenge-fase2-fiap"
 region      = "us-central1"
-bucket_name = "alfabetizacao-datalake-fiap"
+bucket_name = "tc-alfabetizacao-fiap-879273"
