@@ -2,11 +2,17 @@
 Gold marts generation for Dataproc/GCS.
 Usage: pyspark --bucket gs://bucket-name
 
-Generates marts (16 total):
+Generates marts (15 total):
   Base (sempre): agg_uf_indicadores, agg_evolucao_temporal, agg_municipio_ranking,
                  agg_rede_indicadores, agg_priorizacao, agg_top10_uf,
-                 agg_clusters_municipios, agg_vulnerabilidade_ml,
-                 agg_alocacao_otima, agg_qualidade_resumo
+                 agg_vulnerabilidade_ml, agg_alocacao_otima, agg_qualidade_resumo
+
+  agg_priorizacao (ranking com peso de equidade fiscal) e agg_vulnerabilidade_ml
+  (segmentacao K-Means) nao sao redundantes: o primeiro devolve uma ORDEM (quem
+  vem primeiro), o segundo devolve um PERFIL (a que grupo pertence) — ver
+  ADR-014. agg_clusters_municipios (versao por regras do mesmo perfil, sem ADR)
+  foi removida em favor do K-Means, ja documentado no README como a "Aplicacao
+  em IA" oficial do projeto.
   SICONFI (condicional): agg_eficiencia_financeira, agg_custo_ineficiencia,
                          agg_projecao_investimento, agg_correlacoes_uf,
                          agg_roi_executivo, agg_alocacao_otima_estrategias
@@ -19,7 +25,7 @@ sys.path.insert(0, "/tmp/scripts")
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, avg, count, sum as spark_sum, min, max, when, lit,
-    round as spark_round, countDistinct, row_number, percentile_approx, lag
+    round as spark_round, countDistinct, row_number, percentile_approx, lag, corr
 )
 from pyspark.sql.window import Window
 
@@ -125,9 +131,21 @@ def build_mart_uf_indicadores(df):
         spark_round(min("taxa_alfabetizacao"), 2).alias("taxa_min"),
         spark_round(max("taxa_alfabetizacao"), 2).alias("taxa_max"),
         countDistinct("id_municipio").alias("qtd_municipios_analisados"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado"),
         spark_round(avg("media_portugues"), 2).alias("media_portugues_media"),
     )
+    # deficit_total_estimado precisa ser somado no grao MUNICIPIO, nao na linha
+    # bruta (ano x rede): cada linha usa a populacao TOTAL do municipio (ver
+    # 02_silver_transform.py), entao somar direto do df cru conta o municipio
+    # uma vez por rede reportada (ate 3x) antes mesmo de somar entre municipios
+    # da UF. Colapsamos para (municipio, ano) via AVG primeiro — so DEPOIS
+    # somamos entre municipios distintos, que e uma soma legitima (ver ADR-015).
+    deficit_municipio = df.groupBy("ano", "id_municipio", "sigla_uf").agg(
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_municipio")
+    )
+    deficit_uf = deficit_municipio.groupBy("ano", "sigla_uf").agg(
+        spark_round(spark_sum("deficit_municipio"), 0).alias("deficit_total_estimado")
+    )
+    mart = mart.join(deficit_uf, ["ano", "sigla_uf"], "left")
     if "meta_alfabetizacao_2024" in df.columns:
         mart_alvo = df.filter(col("meta_alfabetizacao_2024").isNotNull()) \
             .groupBy("ano", "sigla_uf").agg(
@@ -148,8 +166,17 @@ def build_mart_evolucao_temporal(df):
     base = df.groupBy("ano", "sigla_uf").agg(
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
         countDistinct("id_municipio").alias("qtd_municipios"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado"),
     )
+    # Mesma correcao de agg_uf_indicadores: soma no grao municipio (AVG por
+    # rede), depois soma entre municipios distintos — evita contar o mesmo
+    # municipio ate 3x (uma por rede reportada) no total da UF/ano.
+    deficit_municipio = df.groupBy("ano", "id_municipio", "sigla_uf").agg(
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_municipio")
+    )
+    deficit_uf = deficit_municipio.groupBy("ano", "sigla_uf").agg(
+        spark_round(spark_sum("deficit_municipio"), 0).alias("deficit_total_estimado")
+    )
+    base = base.join(deficit_uf, ["ano", "sigla_uf"], "left")
     w = Window.partitionBy("sigla_uf").orderBy("ano")
     base = base.withColumn("taxa_ano_anterior", lag("taxa_alfabetizacao_media").over(w))
     base = base.withColumn("variacao_pp",
@@ -179,7 +206,7 @@ def build_mart_municipio_ranking(df):
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao"),
         spark_round(avg("meta_alfabetizacao_2024"), 2).alias("meta_alfabetizacao_2024"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total")
     )
     mart = mart.withColumn("gap_meta", spark_round(col("taxa_alfabetizacao") - col("meta_alfabetizacao_2024"), 2))
@@ -233,6 +260,16 @@ def build_mart_rede_indicadores(df):
 
 
 def build_mart_priorizacao(df):
+    """Matriz equidade x eficiencia com ranking de prioridade (regras + mediana — ADR-009).
+
+    Nao e redundante com agg_vulnerabilidade_ml (K-Means): este mart devolve
+    uma ORDEM (ranking_prioridade, um numero por municipio, do mais ao menos
+    urgente) baseada em score_vulnerabilidade com peso de equidade fiscal
+    (metropoles pesam 0.6, medias 0.8 — tem capacidade propria de arrecadacao
+    e nao devem dominar a fila so por escala); agg_vulnerabilidade_ml devolve
+    um PERFIL (cluster/nivel_vulnerabilidade, data-driven, sem julgamento de
+    politica publica embutido). Um responde "quem atender primeiro", o outro
+    "que tipo de municipio e este" — ver ADR-014."""
     print("MART 4: agg_priorizacao — matriz equidade x eficiencia: onde investir rende mais impacto social")
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
@@ -284,15 +321,20 @@ def build_mart_priorizacao(df):
 
 def build_mart_top10_uf(df):
     print("MART 6: agg_top10_uf — os 10 municipios mais prioritarios de cada UF")
+    # dropDuplicates precisa incluir "rede" na chave: sem ela, descartava
+    # arbitrariamente todas as redes de um municipio menos uma antes de
+    # agregar (selecao nao-deterministica de qual rede representa o
+    # municipio) — ver ADR-015. Com "rede" na chave, so remove duplicatas
+    # literais; o groupBy+avg abaixo agrega todas as redes corretamente.
     df_base = df.select("ano", "id_municipio", "nome_municipio", "sigla_uf",
                         "taxa_alfabetizacao", "meta_alfabetizacao_2024",
-                        "populacao_total", "deficit_absoluto_proxy") \
-                .dropDuplicates(["id_municipio", "ano"])
+                        "populacao_total", "deficit_absoluto_proxy", "rede") \
+                .dropDuplicates(["id_municipio", "ano", "rede"])
     mart = df_base.groupBy("ano", "id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao"),
         spark_round(avg("meta_alfabetizacao_2024"), 2).alias("meta_alfabetizacao_2024"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total")
     )
     mart = mart.withColumn("gap_meta", spark_round(col("taxa_alfabetizacao") - col("meta_alfabetizacao_2024"), 2))
@@ -440,69 +482,65 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
     return df_filtrado.orderBy(col("custo_estimado_para_atingir_80").desc())
 
 
-def build_mart_clusters_municipios(df):
-    """Substitui o mart de clustering com segmentação baseada em regras (sem ML)."""
-    print("MART: agg_clusters_municipios — segmentacao de municipios em perfis economico-educacionais (regras)")
-    df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
-        max("nome_municipio").alias("nome_municipio"),
-        spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
-        spark_round(avg("populacao_total"), 0).alias("populacao_total"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total")
-    )
-    mediana_taxa = safe_quantile(df_agg, "taxa_media", default=80.0)
-    mediana_deficit = safe_quantile(df_agg, "deficit_total", default=1000.0)
-    df_agg = df_agg.withColumn("cluster",
-        when((col("taxa_media") >= mediana_taxa) & (col("deficit_total") < mediana_deficit), 0)
-        .when((col("taxa_media") < mediana_taxa) & (col("deficit_total") >= mediana_deficit), 1)
-        .when((col("taxa_media") < mediana_taxa) & (col("deficit_total") < mediana_deficit), 2)
-        .otherwise(3)
-    )
-    df_agg = df_agg.withColumn("cluster_label",
-        when(col("cluster") == 0, "Alta taxa, Baixo deficit")
-        .when(col("cluster") == 1, "Baixa taxa, Alto deficit")
-        .when(col("cluster") == 2, "Baixa taxa, Baixo deficit")
-        .otherwise("Alta taxa, Alto deficit")
-    )
-    return df_agg.orderBy("cluster", col("deficit_total").desc())
-
-
 def build_mart_vulnerabilidade_ml(df, tem_siconfi):
     """Clusters de vulnerabilidade educacional via K-Means (Spark MLlib).
 
     Implementa a 'Aplicacao em IA / clusters de vulnerabilidade educacional'
     citada no enunciado. Combina tres dimensoes por municipio:
-      - Educacao: taxa media, deficit per capita
+      - Educacao: taxa media, deficit per capita (metrica de referencia — ver nota abaixo)
       - Territorio: populacao (escala log — evita metropoles dominarem)
       - Financas: gasto per capita em educacao (quando ha SICONFI)
 
     Features sao padronizadas (StandardScaler) antes do K-Means (k=4). Os
     clusters sao rotulados por nivel de vulnerabilidade (menor taxa media =
-    mais vulneravel) e reporta-se o Silhouette do modelo."""
+    mais vulneravel) e reporta-se o Silhouette do modelo.
+
+    Nao substitui agg_priorizacao: este mart devolve um PERFIL (a que grupo o
+    municipio pertence, via clustering data-driven); agg_priorizacao devolve uma
+    ORDEM (ranking_prioridade, com peso de equidade fiscal que penaliza
+    metropoles por terem capacidade propria de arrecadacao) — ver ADR-014."""
     print("MART: agg_vulnerabilidade_ml — segmentacao de municipios por vulnerabilidade educacional (K-Means MLlib)")
     from pyspark.ml.feature import VectorAssembler, StandardScaler
     from pyspark.ml.clustering import KMeans
     from pyspark.ml.evaluation import ClusteringEvaluator
     from pyspark.sql.functions import log1p
 
+    # deficit_absoluto_proxy e calculado por linha (ano x rede) usando SEMPRE a
+    # populacao TOTAL do municipio (nao populacao especifica da rede) — ver
+    # 02_silver_transform.py. Somar entre linhas (SUM) reutiliza essa mesma
+    # populacao uma vez por rede/ano reportado, inflando o deficit em ate 6x
+    # so pela granularidade de reporte (municipios com mais redes com dado
+    # parecem "mais vulneraveis" sem terem taxa pior). Por isso usamos AVG,
+    # igual a taxa_media e igual a agg_priorizacao — deficit_absoluto_medio e
+    # a media por (ano, rede), nao uma soma cumulativa.
     aggs = [
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_medio"),
     ]
     if tem_siconfi:
         aggs.append(spark_round(avg("gasto_por_habitante_educacao"), 2).alias("gasto_per_capita"))
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(*aggs)
 
+    # deficit_per_capita e a metrica de referencia para vulnerabilidade/priorizacao
+    # (nao deficit_absoluto): elimina o vies de escala populacional — sem ela,
+    # metropoles dominariam qualquer ranking so por volume, nao por severidade.
     df_agg = df_agg.withColumn("deficit_per_capita",
-        spark_round(when(col("populacao_total") > 0, col("deficit_total") / col("populacao_total")).otherwise(lit(0)), 4))
+        spark_round(when(col("populacao_total") > 0, col("deficit_absoluto_medio") / col("populacao_total")).otherwise(lit(0)), 4))
     df_agg = df_agg.withColumn("log_populacao", log1p(col("populacao_total")))
 
     feature_cols = ["taxa_media", "deficit_per_capita", "log_populacao"]
     if tem_siconfi:
         feature_cols.append("gasto_per_capita")
 
+    total_municipios = df_agg.count()
     df_model = df_agg.dropna(subset=feature_cols)
+    municipios_no_modelo = df_model.count()
+    if municipios_no_modelo < total_municipios:
+        print(f"  [INFO] {total_municipios - municipios_no_modelo} municipios excluidos do K-Means "
+              f"por falta de dado em {feature_cols} (ex.: sem cobertura SICONFI) — "
+              f"{municipios_no_modelo}/{total_municipios} municipios no modelo.")
 
     assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_raw")
     df_vec = assembler.transform(df_model)
@@ -536,7 +574,7 @@ def build_mart_vulnerabilidade_ml(df, tem_siconfi):
         cluster_stats.select("cluster", "nivel_vulnerabilidade", "silhouette_modelo"), "cluster", "left")
 
     out_cols = ["id_municipio", "sigla_uf", "nome_municipio", "taxa_media",
-                "deficit_per_capita", "populacao_total", "deficit_total"]
+                "deficit_per_capita", "populacao_total", "deficit_absoluto_medio"]
     if tem_siconfi:
         out_cols.append("gasto_per_capita")
     out_cols += ["cluster", "nivel_vulnerabilidade", "silhouette_modelo"]
@@ -552,11 +590,15 @@ def build_mart_alocacao_otima(df, df_eficiencia=None):
     heuristica greedy do ADR-010 (ordenar por razao e pegar o prefixo que cabe
     no orcamento), agora como mart consumivel no BigQuery."""
     print("MART: agg_alocacao_otima — alocacao otima de orcamento fixo entre municipios (Knapsack Greedy)")
+    # deficit_absoluto_medio e informativo (nao entra no custo/beneficio do
+    # knapsack, que usa gap_ate_80 x populacao_alfabetizavel_estimada — ADR-013).
+    # AVG, nao SUM: cada linha usa a populacao TOTAL do municipio: somar entre
+    # redes/anos contaria essa populacao varias vezes (ver ADR-015).
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total")
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_medio")
     )
     df_agg = df_agg.withColumn("gap_ate_80",
         spark_round(when(lit(80.0) - col("taxa_media") < 0, lit(0)).otherwise(lit(80.0) - col("taxa_media")), 2))
@@ -572,10 +614,11 @@ def build_mart_alocacao_otima(df, df_eficiencia=None):
     df_agg = df_agg.withColumn("custo_estimado",
         spark_round(col("gap_ate_80") * lit(custo_ponto_pc) * col("populacao_alfabetizavel_estimada"), 2))
     df_agg = df_agg.filter((col("gap_ate_80") > 0) & (col("custo_estimado") > 0))
-    # Beneficio ancorado na MESMA meta do custo (80%), nao nos 100% do deficit_total.
-    # deficit_total (base 100%) e custo_estimado (base 80%) misturavam referencias
-    # diferentes no score — inflava artificialmente municipios perto de 80% (ver
-    # auditoria 2026-07-02). beneficio_alunos_ate_80 usa a mesma base de gap_ate_80
+    # Beneficio ancorado na MESMA meta do custo (80%), nao nos 100% do
+    # deficit_absoluto_medio. deficit_absoluto_medio (base 100%) e
+    # custo_estimado (base 80%) misturavam referencias diferentes no score —
+    # inflava artificialmente municipios perto de 80% (ver auditoria
+    # 2026-07-02). beneficio_alunos_ate_80 usa a mesma base de gap_ate_80
     # e a mesma populacao_alfabetizavel_estimada do custo (ADR-013).
     df_agg = df_agg.withColumn("beneficio_alunos_ate_80",
         spark_round((col("gap_ate_80") / 100.0) * col("populacao_alfabetizavel_estimada"), 0))
@@ -597,47 +640,61 @@ def build_mart_alocacao_otima(df, df_eficiencia=None):
 def build_mart_qualidade_resumo(df):
     """Distribuição de municípios por bucket de qualidade por UF."""
     print("MART: agg_qualidade_resumo — distribuicao de municipios por qualidade de dados (bucket Critico/Ruim/Razoavel/Excelente)")
-    df_base = df.select("ano", "id_municipio", "sigla_uf", "taxa_alfabetizacao", "deficit_absoluto_proxy") \
-                .dropDuplicates(["id_municipio", "ano"])
-    df_base = df_base.withColumn("bucket_qualidade",
+    # Colapsa para (municipio, ano) via AVG antes de classificar o bucket —
+    # o dropDuplicates(["id_municipio","ano"]) anterior descartava
+    # arbitrariamente todas as redes menos uma (selecao nao-deterministica de
+    # qual rede define o bucket do municipio) e ainda somava deficit entre
+    # redes que sobravam. Ver ADR-015.
+    df_municipio = df.groupBy("ano", "id_municipio", "sigla_uf").agg(
+        spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_municipio")
+    )
+    df_municipio = df_municipio.withColumn("bucket_qualidade",
         when(col("taxa_alfabetizacao") < 25, "1-Critico")
         .when(col("taxa_alfabetizacao") < 50, "2-Ruim")
         .when(col("taxa_alfabetizacao") < 75, "3-Razoavel")
         .otherwise("4-Excelente")
     )
-    mart = df_base.groupBy("ano", "sigla_uf", "bucket_qualidade").agg(
+    mart = df_municipio.groupBy("ano", "sigla_uf", "bucket_qualidade").agg(
         countDistinct("id_municipio").alias("qtd_municipios"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado")
+        spark_round(spark_sum("deficit_municipio"), 0).alias("deficit_total_estimado")
     )
-    total_por_uf = df_base.groupBy("ano", "sigla_uf").agg(countDistinct("id_municipio").alias("total_municipios_uf"))
+    total_por_uf = df_municipio.groupBy("ano", "sigla_uf").agg(countDistinct("id_municipio").alias("total_municipios_uf"))
     mart = mart.join(total_por_uf, ["ano", "sigla_uf"], "left")
     mart = mart.withColumn("pct_municipios", spark_round((col("qtd_municipios") / col("total_municipios_uf")) * 100, 1))
     return mart.orderBy("ano", "sigla_uf", "bucket_qualidade")
 
 
 def build_mart_correlacoes_uf(df):
-    """Correlação Pearson gasto×taxa por UF (requer SICONFI)."""
+    """Correlação Pearson gasto×taxa por UF (requer SICONFI).
+
+    ANTES: `df.stat.corr(...)` calculava a correlacao UMA VEZ para o Brasil
+    inteiro e repetia esse mesmo numero nacional em toda linha do mart — um
+    mart chamado "por UF" que na pratica nao correlacionava nada por UF.
+    Corrigido usando a funcao agregada `corr()` dentro de um `groupBy("sigla_uf")`,
+    que calcula o Pearson de fato por grupo (ver ADR-015)."""
     print("MART: agg_correlacoes_uf — forca da relacao entre gasto e taxa de alfabetizacao, por UF")
     if "gasto_por_habitante_educacao" not in df.columns:
         return None
-    try:
-        pearson_gasto_taxa = df.stat.corr("gasto_por_habitante_educacao", "taxa_alfabetizacao")
-        pearson_deficit_gasto = df.stat.corr("deficit_absoluto_proxy", "gasto_por_habitante_educacao")
-    except Exception:
-        return None
 
     mart = df.groupBy("sigla_uf").agg(
-        countDistinct("id_municipio").alias("n_municipios")
+        countDistinct("id_municipio").alias("n_municipios"),
+        spark_round(corr("gasto_por_habitante_educacao", "taxa_alfabetizacao"), 4).alias("pearson_gasto_taxa"),
+        spark_round(corr("deficit_absoluto_proxy", "gasto_por_habitante_educacao"), 4).alias("pearson_deficit_gasto"),
     )
-    mart = mart.withColumn("pearson_gasto_taxa", lit(round(pearson_gasto_taxa, 4)))
-    mart = mart.withColumn("pearson_deficit_gasto", lit(round(pearson_deficit_gasto, 4)))
+    # abs(): correlacao negativa forte (ex.: -0.7) e tao "forte" quanto +0.7 —
+    # classificar pelo valor bruto rotularia uma relacao inversa forte como
+    # "Fraca" (bug pre-existente, mais visivel agora que o calculo e real por UF).
+    mart = mart.withColumn("forca_correlacao_abs", when(col("pearson_gasto_taxa").isNotNull(),
+        when(col("pearson_gasto_taxa") < 0, -col("pearson_gasto_taxa")).otherwise(col("pearson_gasto_taxa"))))
     mart = mart.withColumn("interpretacao_correlacao",
-        when(col("pearson_gasto_taxa") < 0.3, "Fraca (<0.3)")
-        .when(col("pearson_gasto_taxa") < 0.6, "Moderada (0.3-0.6)")
+        when(col("forca_correlacao_abs").isNull(), "Sem dado suficiente")
+        .when(col("forca_correlacao_abs") < 0.3, "Fraca (<0.3)")
+        .when(col("forca_correlacao_abs") < 0.6, "Moderada (0.3-0.6)")
         .otherwise("Forte (>0.6)")
     )
-    return mart.orderBy("sigla_uf")
+    return mart.drop("forca_correlacao_abs").orderBy("sigla_uf")
 
 
 def build_mart_roi_executivo(df, mart_custo=None, mart_investimento=None):
@@ -675,9 +732,10 @@ def build_mart_alocacao_otima_estrategias(df, mart_projecao=None):
     if mart_projecao is None:
         return None
 
-    # Nome explicito (nao "deficit_total") porque a base e 80%, diferente do
-    # deficit_total (base 100%) usado em agg_alocacao_otima/agg_priorizacao —
-    # mesmo nome com semantica diferente causava confusao entre marts.
+    # Nome explicito (nao "deficit_absoluto_medio") porque a base e 80%,
+    # diferente do deficit_absoluto_medio/deficit_absoluto_proxy (base 100%)
+    # usado em agg_alocacao_otima/agg_priorizacao — mesmo nome com semantica
+    # diferente causava confusao entre marts.
     df_agg = mart_projecao.select(
         "id_municipio", "sigla_uf", "nome_municipio",
         col("taxa_alfabetizacao_media").alias("taxa_media"),
@@ -774,7 +832,6 @@ def run_gold(spark, silver_dir, gold_dir):
     marts["agg_rede_indicadores"] = safe_build("agg_rede_indicadores", build_mart_rede_indicadores, df)
     marts["agg_priorizacao"] = safe_build("agg_priorizacao", build_mart_priorizacao, df)
     marts["agg_top10_uf"] = safe_build("agg_top10_uf", build_mart_top10_uf, df)
-    marts["agg_clusters_municipios"] = safe_build("agg_clusters_municipios", build_mart_clusters_municipios, df)
     marts["agg_vulnerabilidade_ml"] = safe_build("agg_vulnerabilidade_ml", build_mart_vulnerabilidade_ml, df, tem_siconfi)
 
     marts["agg_qualidade_resumo"] = safe_build("agg_qualidade_resumo", build_mart_qualidade_resumo, df)

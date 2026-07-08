@@ -30,7 +30,6 @@ MARTS = [
     "agg_rede_indicadores",
     "agg_priorizacao",
     "agg_top10_uf",
-    "agg_clusters_municipios",
     "agg_vulnerabilidade_ml",
     "agg_alocacao_otima",
     "agg_qualidade_resumo",

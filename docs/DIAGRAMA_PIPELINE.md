@@ -30,11 +30,11 @@ flowchart TB
         S5["02_consumer_streaming.py\n(Spark Structured Streaming)"]
     end
 
-    subgraph GOLD["GOLD — 16 marts analíticos (partição: ano)"]
+    subgraph GOLD["GOLD — 15 marts analíticos (partição: ano)"]
         G1["Executivos:\nagg_uf_indicadores, agg_evolucao_temporal,\nagg_rede_indicadores, agg_qualidade_resumo"]
-        G2["Priorização:\nagg_municipio_ranking, agg_top10_uf,\nagg_priorizacao"]
+        G2["Priorização (ranking, ADR-009):\nagg_municipio_ranking, agg_top10_uf,\nagg_priorizacao"]
         G3["Financeiro (ADR-012/013):\nagg_eficiencia_financeira, agg_custo_ineficiencia,\nagg_projecao_investimento, agg_roi_executivo"]
-        G4["IA / ML:\nagg_clusters_municipios, agg_vulnerabilidade_ml (K-Means),\nagg_alocacao_otima(_estrategias) (Knapsack)"]
+        G4["IA / ML:\nagg_vulnerabilidade_ml (K-Means, ADR-014),\nagg_alocacao_otima(_estrategias) (Knapsack)"]
         G5["Correlação:\nagg_correlacoes_uf"]
     end
 
@@ -84,7 +84,7 @@ flowchart LR
     B -->|"LEFT JOIN\nid_municipio + ano + rede"| C["+ SICONFI\ndespesa_educacao,\ngasto_por_habitante_educacao"]
     C -->|"KNN K=5 por UF\n(taxa + população + déficit)\nADR-004"| D["+ Metas imputadas\nmeta_alfabetizacao_2024_imputada\n(flag is_imputado)"]
     D -->|"JOIN microdados SAEB"| E["OBT final\n+ taxa_alunos_alfabetizados_microdados"]
-    E --> F["GOLD (16 marts)"]
+    E --> F["GOLD (15 marts)"]
 
     note1["proporcao_aluno_nivel_* preserva NULL\n(ADR-003 — nunca fillna(0))"]
     note1 -.-> B

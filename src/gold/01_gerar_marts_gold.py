@@ -115,10 +115,21 @@ def build_mart_uf_indicadores(df):
         spark_round(percentile_approx("taxa_alfabetizacao", 0.5), 2).alias("taxa_alfabetizacao_mediana"),
         spark_round(min("taxa_alfabetizacao"), 2).alias("taxa_min"),
         spark_round(max("taxa_alfabetizacao"), 2).alias("taxa_max"),
-        count("id_municipio").alias("qtd_municipios_analisados"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado"),
+        countDistinct("id_municipio").alias("qtd_municipios_analisados"),
         spark_round(avg("media_portugues"), 2).alias("media_portugues_media"),
     )
+    # deficit_total_estimado: soma no grao MUNICIPIO (AVG por rede/ano), so
+    # depois soma entre municipios distintos — cada linha usa a populacao
+    # TOTAL do municipio, somar direto do df cru contaria o municipio ate 3x
+    # (uma por rede reportada). qtd_municipios_analisados tambem corrigido de
+    # count() (conta linhas, nao municipios) para countDistinct() — ver ADR-015.
+    deficit_municipio = df.groupBy("ano", "id_municipio", "sigla_uf").agg(
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_municipio")
+    )
+    deficit_uf = deficit_municipio.groupBy("ano", "sigla_uf").agg(
+        spark_round(spark_sum("deficit_municipio"), 0).alias("deficit_total_estimado")
+    )
+    mart = mart.join(deficit_uf, ["ano", "sigla_uf"], "left")
 
     if "meta_alfabetizacao_2024" in df.columns:
         mart_alvo = df.filter(col("meta_alfabetizacao_2024").isNotNull()) \
@@ -159,7 +170,7 @@ def build_mart_municipio_ranking(df):
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao"),
         spark_round(avg("meta_alfabetizacao_2024"), 2).alias("meta_alfabetizacao_2024"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total")
     )
 
@@ -251,7 +262,7 @@ def build_mart_priorizacao(df):
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total"),
         countDistinct("ano").alias("anos_com_dado")
     )
@@ -423,17 +434,21 @@ def build_mart_top10_uf(df):
     logger.info("  Proposito: Para cada UF, os 10 municipios com maior")
     logger.info("  score de prioridade. Acao imediata por estado.")
 
+    # dropDuplicates precisa incluir "rede" na chave: sem ela, descartava
+    # arbitrariamente todas as redes de um municipio menos uma antes de
+    # agregar (selecao nao-deterministica de qual rede representa o
+    # municipio) — ver ADR-015.
     df_base = df.select(
         "ano", "id_municipio", "nome_municipio", "sigla_uf",
         "taxa_alfabetizacao", "meta_alfabetizacao_2024", "populacao_total",
-        "deficit_absoluto_proxy"
-    ).dropDuplicates(["id_municipio", "ano"])
+        "deficit_absoluto_proxy", "rede"
+    ).dropDuplicates(["id_municipio", "ano", "rede"])
 
     mart = df_base.groupBy("ano", "id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao"),
         spark_round(avg("meta_alfabetizacao_2024"), 2).alias("meta_alfabetizacao_2024"),
-        spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
+        spark_round(avg("deficit_absoluto_proxy"), 0).alias("deficit_absoluto_proxy"),
         spark_round(avg("populacao_total"), 0).alias("populacao_total")
     )
 

@@ -133,21 +133,6 @@ resource "google_bigquery_table" "agg_top10_uf" {
   }
 }
 
-resource "google_bigquery_table" "agg_clusters_municipios" {
-  count               = var.create_tables ? 1 : 0
-  dataset_id          = google_bigquery_dataset.gold.dataset_id
-  table_id            = "agg_clusters_municipios"
-  project             = var.project_id
-  deletion_protection = false
-  description         = "Segmentacao de municipios em 4 perfis economico-educacionais, por regras (taxa x deficit)"
-
-  external_data_configuration {
-    autodetect    = true
-    source_format = "PARQUET"
-    source_uris   = ["gs://${var.bucket_name}/gold/agg_clusters_municipios/*"]
-  }
-}
-
 resource "google_bigquery_table" "agg_alocacao_otima" {
   count               = var.create_tables ? 1 : 0
   dataset_id          = google_bigquery_dataset.gold.dataset_id
