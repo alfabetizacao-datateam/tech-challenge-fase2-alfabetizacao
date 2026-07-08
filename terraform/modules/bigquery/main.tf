@@ -222,3 +222,33 @@ resource "google_bigquery_table" "agg_alocacao_otima_estrategias" {
     source_uris   = ["gs://${var.bucket_name}/gold/agg_alocacao_otima_estrategias/*"]
   }
 }
+
+resource "google_bigquery_table" "agg_evolucao_temporal" {
+  count               = var.create_tables ? 1 : 0
+  dataset_id          = google_bigquery_dataset.gold.dataset_id
+  table_id            = "agg_evolucao_temporal"
+  project             = var.project_id
+  deletion_protection = false
+  description         = "Evolucao ano a ano da taxa de alfabetizacao por UF, com variacao em pontos percentuais e %"
+
+  external_data_configuration {
+    autodetect    = true
+    source_format = "PARQUET"
+    source_uris   = ["gs://${var.bucket_name}/gold/agg_evolucao_temporal/*"]
+  }
+}
+
+resource "google_bigquery_table" "agg_vulnerabilidade_ml" {
+  count               = var.create_tables ? 1 : 0
+  dataset_id          = google_bigquery_dataset.gold.dataset_id
+  table_id            = "agg_vulnerabilidade_ml"
+  project             = var.project_id
+  deletion_protection = false
+  description         = "Segmentacao de municipios por vulnerabilidade educacional via K-Means (Spark MLlib) — educacao, territorio e financas"
+
+  external_data_configuration {
+    autodetect    = true
+    source_format = "PARQUET"
+    source_uris   = ["gs://${var.bucket_name}/gold/agg_vulnerabilidade_ml/*"]
+  }
+}
