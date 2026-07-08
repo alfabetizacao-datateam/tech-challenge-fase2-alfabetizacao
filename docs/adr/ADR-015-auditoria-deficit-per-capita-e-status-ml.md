@@ -122,6 +122,21 @@ confiável e vale subir: o script já escreve no path
 seja, não há trabalho de integração pendente, só a decisão de rodar e
 validar o número.
 
+**RESULTADO (2026-07-08 — rodado em produção):** MAE 5,12pp, RMSE 7,26pp
+(1.046/1.046 municípios do holdout avaliados), bem abaixo do limiar de
+alerta (10pp) — **promovido**. Cobertura de meta: 43,6% (original) → 94,5%
+(propagação) → 100% (KNN, 318 municípios). Observação: a média/mediana das
+metas imputadas pelo KNN (60,1%/61,5%) ficou abaixo da faixa de sanidade
+85-95% do ADR-004 — não é um erro: os 318 municípios que só o KNN resolveu
+(nem a propagação achou) tendem a ser os mais vulneráveis (sem meta
+reportada em nenhuma rede), então um valor imputado mais baixo é esperado.
+O holdout (medida direta de acurácia) é a validação mais confiável e já
+confirma a imputação. Verificação pós-promoção em
+`agg_municipio_ranking`: `status_risco` monotônico em `gap_meta_medio`
+(+11,97 a -32,5pp entre os 4 buckets), 23/5.516 municípios (0,4%) com
+`gap_meta` além de ±50pp — proporção pequena e plausível, sem distorção
+sistêmica. Ver `docs/NUMEROS_RECALCULADOS.md`, seção "Reprocessamento 3".
+
 ---
 
 ## 4. RandomForest (predição de risco) — recomendação: MANTER como protótipo validado, não forçar produção agora
@@ -160,16 +175,35 @@ Confirma a opção 2 ("esforço médio") já levantada em
 
 ## 5. GATILHO DE REVISÃO
 
-- [ ] Rodar `02_imputar_metas_knn.py` contra produção e revisar o
-  `metrics_knn_imputacao.json` gerado — se MAE for alto (>10pp, threshold já
-  logado como aviso no código), não promover sem revisar features/K antes.
+- [x] Rodar `02_imputar_metas_knn.py`/`dataproc_05_knn_metas.py` contra
+  produção — feito em 2026-07-08, MAE 5,12pp, promovido (ver Seção 3).
 - [ ] Rodar `03_modelo_preditivo_risco.py` (RandomForest) contra a base
   completa para obter e versionar um `metrics.json` real antes do vídeo
   executivo.
-- [ ] Se o KNN for promovido, reprocessar o Gold (local e cloud) e rodar
-  `scripts/verificar_numeros_publicacao.py` de novo — o fix de
-  `deficit_absoluto_proxy` (Seção 2) e a nova cobertura de `gap_meta` podem
-  mudar `agg_municipio_ranking`/`agg_top10_uf`/`status_risco` para redes
-  não-Municipais (não deve mudar `agg_projecao_investimento`/
-  `agg_roi_executivo`, que não dependem de `deficit_absoluto_proxy` nem de
-  `gap_meta`).
+- [x] Reprocessar o Gold (cloud) e rodar `scripts/verificar_numeros_publicacao.py`
+  de novo — feito em 2026-07-08: investimento/ROI intactos, cobertura do
+  knapsack variou dentro da tolerância de 2% (ver `docs/NUMEROS_RECALCULADOS.md`).
+
+## 6. ACHADO DE INFRAESTRUTURA (2026-07-08, durante o reprocessamento)
+
+`terraform.tfvars.example` tinha `bucket_name = "alfabetizacao-datalake-fiap"`
+como default — esse bucket **não existe** no projeto. O bucket real é
+`tc-alfabetizacao-fiap-879273` (confirmado via
+`gcloud storage buckets list`, já documentado em `docs/DEPLOY_GCP.md`).
+Corrigido o default no `.example` com um aviso para sempre confirmar antes
+de usar.
+
+Também descoberto: o Terraform gerencia um dataset BigQuery chamado
+`"gold"` (default hardcoded em `terraform/modules/bigquery/variables.tf`),
+que está **vazio (0 tabelas)** — nunca foi o caminho real de carga de
+dados. O dataset de produção de fato, usado por `02_load_bigquery.py` e por
+toda a documentação/scripts (`scripts/verificar_numeros_publicacao.py`,
+`docs/DEPLOY_GCP.md`), é `alfabetizacao_gold`. **`terraform apply` foi
+pulado no reprocessamento de 2026-07-08** — os dois módulos (GCS bucket,
+Dataproc cluster) já existiam fora do controle do Terraform (sem estado
+local, já que `terraform.tfstate` é gitignored e nunca existiu nesta
+sessão), e o módulo BigQuery gerencia um dataset paralelo desconectado do
+real. Reconciliar isso (via `terraform import` dos recursos reais, ou
+apontar o módulo BigQuery para `alfabetizacao_gold`) fica como pendência —
+não bloqueou a entrega porque `02_load_bigquery.py` já resolve a carga real
+de forma independente do Terraform.

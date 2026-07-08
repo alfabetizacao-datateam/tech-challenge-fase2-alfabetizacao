@@ -1,4 +1,4 @@
-# Números Recalculados — Reprocessamento GCP 2026-07-04 (+ correção 2026-07-07)
+# Números Recalculados — Reprocessamento GCP 2026-07-04 (+ correções 2026-07-07 e 2026-07-08)
 
 > Substitui os números do README antigo (R$703M / ROI 19,4x / 2.815 municípios),
 > calculados com o modelo de custo pré-ADR-012. Estes valores vêm do BigQuery
@@ -74,11 +74,11 @@ SELECT COUNT(*) AS total_com_gap, COUNTIF(selecionado_no_orcamento) AS seleciona
 FROM `tech-challenge-fase2-fiap.alfabetizacao_gold.agg_alocacao_otima`;
 ```
 
-| Métrica | Valor | 2026-07-04 (benchmark default no knapsack) | Modelo antigo (README) |
-|---|---|---|---|
-| Municípios selecionados / total com gap | **2.331 / 4.679** | 2.329 / 4.679 | 2.815 / 2.815 |
-| Cobertura do orçamento | **49,8%** | 49,8% | 99,96% |
-| Alunos estimados beneficiados | **255.223** | 246.563 | (não reportado) |
+| Métrica | Valor (2026-07-08) | 2026-07-07 | 2026-07-04 (benchmark default) | Modelo antigo (README) |
+|---|---|---|---|---|
+| Municípios selecionados / total com gap | **2.334 / 4.679** | 2.331 / 4.679 | 2.329 / 4.679 | 2.815 / 2.815 |
+| Cobertura do orçamento | **49,9%** | 49,8% | 49,8% | 99,96% |
+| Alunos estimados beneficiados | **254.186** | 255.223 | 246.563 | (não reportado) |
 
 > Com benchmark calibrado real (~R$1.939/aluno, vs R$20/aluno artificialmente
 > baixo do modelo antigo), R$500M cobre metade dos municípios com gap, não
@@ -88,7 +88,15 @@ FROM `tech-challenge-fase2-fiap.alfabetizacao_gold.agg_alocacao_otima`;
 > A coluna "2026-07-04" é o valor anterior à correção de 2026-07-07 (quando o
 > knapsack ainda usava a constante default R$20/hab/ponto em vez do benchmark
 > calibrado ~R$19,39/hab/ponto): levemente conservador, por isso a cobertura
-> real (coluna atual) é um pouco maior.
+> real ficou um pouco maior a partir de 2026-07-07.
+>
+> A pequena variação de 2026-07-08 (2.331→2.334 selecionados, 255.223→254.186
+> alunos) vem da cobertura de `gap_meta` ter ido de ~44% para 100% após o KNN
+> de imputação de metas (ver ADR-015) — municípios de redes não-Municipais
+> que antes tinham `meta_alfabetizacao_2024` NULL agora entram no cálculo.
+> `scripts/verificar_numeros_publicacao.py` confirmou tudo dentro da
+> tolerância de 2% — investimento (R$1.218,3M) e ROI (28,69×) não mudaram
+> (não dependem de `gap_meta` nem de `deficit_absoluto_proxy`).
 
 ## Reprocessamento — o que foi feito
 
@@ -119,3 +127,58 @@ Bronze/Silver/SICONFI, só regerar o Gold com o fix do benchmark do knapsack.
    municípios com gap bateram exato; `alunos_beneficiados` e
    `selecionados_no_orcamento` do knapsack vieram maiores (esperado — ver
    tabela 3 acima). Script e README atualizados com os novos valores.
+
+## Reprocessamento 3 — 2026-07-08 (última rodada: KNN em produção + fix de deficit_per_capita)
+
+Motivado pela auditoria completa do pipeline (ver ADR-014 e ADR-015):
+correção de double-counting de `deficit_absoluto_proxy` em 10 pontos do
+pipeline, remoção de `agg_clusters_municipios` (duplicata do K-Means sem
+ADR), e primeira execução do KNN de imputação de metas em produção.
+
+**Descoberta de infraestrutura durante a execução:** o bucket real do
+projeto é `tc-alfabetizacao-fiap-879273` (confirmado via
+`gcloud storage buckets list`) — o `terraform.tfvars` local apontava para
+`alfabetizacao-datalake-fiap`, que **não existe**. O Terraform também
+gerencia um dataset BigQuery chamado `gold` (vazio, 0 tabelas) que nunca
+foi o caminho real de carga — a carga sempre foi feita via
+`02_load_bigquery.py` direto no dataset `alfabetizacao_gold`. **O
+`terraform apply` foi pulado nesta rodada** — não é o caminho real de dados,
+só um artefato paralelo de IaC (provavelmente para atender ao requisito de
+"Terraform gerencia os 3 módulos" do enunciado, sem estar de fato no
+caminho crítico).
+
+1. Cluster Dataproc recriado (`spark-alfabetizacao`, mesma receita); Cloud
+   NAT não foi necessário (SICONFI já tinha cache do GCS).
+2. Scripts sincronizados via `gsutil cp -r src/cloud gs://.../scripts/`
+   (substituindo a pasta antiga).
+3. **`dataproc_05_knn_metas.py` (novo, ADR-015) rodado pela primeira vez em
+   produção:** cobertura de meta 43,6% → 94,5% (propagação) → 100% (KNN).
+   Validação por holdout: **MAE 5,12pp, RMSE 7,26pp** (1.046/1.046
+   municípios avaliados) — bem abaixo do limiar de alerta (10pp).
+4. `dataproc_03_gold.py` rodado: **15/15 marts**, 0 erros (sem
+   `agg_clusters_municipios`, removida no ADR-014). Silhouette do K-Means
+   (`agg_vulnerabilidade_ml`) subiu de 0,41 para **0,46** após o fix de
+   `deficit_per_capita` (eliminação do double-counting).
+5. BigQuery recarregado via `02_load_bigquery.py`: **15/15 tabelas, 0
+   erros**, direto no dataset `alfabetizacao_gold`.
+6. Tabela órfã `agg_clusters_municipios` (de reprocessamentos anteriores,
+   pré-ADR-014) removida manualmente (`bq rm -f -t`), já que o script de
+   carga só atualiza/cria tabelas da sua lista — não apaga as que saíram.
+7. `scripts/verificar_numeros_publicacao.py`: investimento e ROI exatos
+   (não mudam); cobertura do knapsack variou dentro da tolerância de 2%
+   (ver tabela 3 acima — efeito da cobertura de `gap_meta` ir a 100%).
+8. Verificação pós-KNN em `agg_municipio_ranking`: distribuição de
+   `status_risco` monotônica em `gap_meta_medio` (+11,97 a -32,5 pp entre
+   os 4 buckets); 23/5.516 municípios (0,4%) com `gap_meta` além de ±50pp —
+   proporção pequena e plausível, sem sinal de distorção sistêmica.
+9. `agg_correlacoes_uf` confirmado com correlação real por UF (variando de
+   -0,50 a 0,36 entre UFs — antes do fix repetia um único valor nacional em
+   todas as linhas) e classificação por valor absoluto funcionando (AC com
+   -0,50 corretamente rotulado "Moderada", não "Fraca").
+10. Infraestrutura (só o cluster — NAT não foi criado desta vez) deletada
+    ao final.
+
+**Decisão sobre RandomForest (predição de risco):** mantido como protótipo
+validado tecnicamente, não integrado à esteira Dataproc/BigQuery nesta
+rodada — não alimenta nenhum outro mart, custo de integração desproporcional
+ao ganho para esta entrega (ver ADR-015, seção 4).
