@@ -118,13 +118,13 @@ def load_silver(spark, silver_dir):
 
 
 def build_mart_uf_indicadores(df):
-    print("MART 1: agg_uf_indicadores")
+    print("MART 1: agg_uf_indicadores — panorama por UF e ano (taxa, meta e gap de alfabetizacao)")
     mart = df.groupBy("ano", "sigla_uf").agg(
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
         spark_round(percentile_approx("taxa_alfabetizacao", 0.5), 2).alias("taxa_alfabetizacao_mediana"),
         spark_round(min("taxa_alfabetizacao"), 2).alias("taxa_min"),
         spark_round(max("taxa_alfabetizacao"), 2).alias("taxa_max"),
-        count("id_municipio").alias("qtd_municipios_analisados"),
+        countDistinct("id_municipio").alias("qtd_municipios_analisados"),
         spark_round(spark_sum("deficit_absoluto_proxy"), 0).alias("deficit_total_estimado"),
         spark_round(avg("media_portugues"), 2).alias("media_portugues_media"),
     )
@@ -144,7 +144,7 @@ def build_mart_evolucao_temporal(df):
     """Evolucao temporal do indicador de alfabetizacao por UF (exemplo explicito
     do enunciado: 'Evolucao temporal do indicador'). Calcula a taxa media por
     UF/ano e a variacao ano-a-ano (pontos percentuais e %) via window lag."""
-    print("MART: agg_evolucao_temporal")
+    print("MART: agg_evolucao_temporal — evolucao ano a ano da taxa de alfabetizacao por UF")
     base = df.groupBy("ano", "sigla_uf").agg(
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
         countDistinct("id_municipio").alias("qtd_municipios"),
@@ -169,7 +169,7 @@ def build_mart_evolucao_temporal(df):
 
 
 def build_mart_municipio_ranking(df):
-    print("MART 2: agg_municipio_ranking")
+    print("MART 2: agg_municipio_ranking — ranking nacional de urgencia por municipio")
     df_base = df.select("ano", "id_municipio", "nome_municipio", "sigla_uf",
                         "taxa_alfabetizacao", "meta_alfabetizacao_2024",
                         "populacao_total", "deficit_absoluto_proxy", "rede") \
@@ -215,7 +215,7 @@ def build_mart_municipio_ranking(df):
 
 
 def build_mart_rede_indicadores(df):
-    print("MART 3: agg_rede_indicadores")
+    print("MART 3: agg_rede_indicadores — comparacao entre redes de ensino (Municipal, Estadual, Federal, Privada)")
     mart = df.groupBy("ano", "sigla_uf", "rede").agg(
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
         count("id_municipio").alias("qtd_registros"),
@@ -233,7 +233,7 @@ def build_mart_rede_indicadores(df):
 
 
 def build_mart_priorizacao(df):
-    print("MART 4: agg_priorizacao")
+    print("MART 4: agg_priorizacao — matriz equidade x eficiencia: onde investir rende mais impacto social")
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_alfabetizacao_media"),
@@ -283,7 +283,7 @@ def build_mart_priorizacao(df):
 
 
 def build_mart_top10_uf(df):
-    print("MART 6: agg_top10_uf")
+    print("MART 6: agg_top10_uf — os 10 municipios mais prioritarios de cada UF")
     df_base = df.select("ano", "id_municipio", "nome_municipio", "sigla_uf",
                         "taxa_alfabetizacao", "meta_alfabetizacao_2024",
                         "populacao_total", "deficit_absoluto_proxy") \
@@ -318,7 +318,7 @@ def build_mart_top10_uf(df):
 
 
 def build_mart_eficiencia_financeira(df):
-    print("MART 7: agg_eficiencia_financeira")
+    print("MART 7: agg_eficiencia_financeira — classificacao de cada municipio por eficiencia do gasto")
     if "gasto_por_habitante_educacao" not in df.columns:
         return None
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
@@ -345,7 +345,7 @@ def build_mart_eficiencia_financeira(df):
 
 
 def build_mart_custo_ineficiencia(df):
-    print("MART 8: agg_custo_ineficiencia")
+    print("MART 8: agg_custo_ineficiencia — quanto do orcamento ja existente esta sendo desperdicado por ma gestao")
     if "gasto_por_habitante_educacao" not in df.columns:
         return None
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
@@ -399,7 +399,7 @@ def resolve_custo_marginal_benchmark(df_eficiencia):
 
 
 def build_mart_projecao_investimento(df, df_eficiencia=None):
-    print("MART 9: agg_projecao_investimento")
+    print("MART 9: agg_projecao_investimento — quanto custaria levar cada municipio a 80% de alfabetizacao")
     if "gasto_por_habitante_educacao" not in df.columns:
         return None
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
@@ -442,7 +442,7 @@ def build_mart_projecao_investimento(df, df_eficiencia=None):
 
 def build_mart_clusters_municipios(df):
     """Substitui o mart de clustering com segmentação baseada em regras (sem ML)."""
-    print("MART: agg_clusters_municipios (segmentacao por regras)")
+    print("MART: agg_clusters_municipios — segmentacao de municipios em perfis economico-educacionais (regras)")
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
@@ -478,7 +478,7 @@ def build_mart_vulnerabilidade_ml(df, tem_siconfi):
     Features sao padronizadas (StandardScaler) antes do K-Means (k=4). Os
     clusters sao rotulados por nivel de vulnerabilidade (menor taxa media =
     mais vulneravel) e reporta-se o Silhouette do modelo."""
-    print("MART: agg_vulnerabilidade_ml (K-Means MLlib)")
+    print("MART: agg_vulnerabilidade_ml — segmentacao de municipios por vulnerabilidade educacional (K-Means MLlib)")
     from pyspark.ml.feature import VectorAssembler, StandardScaler
     from pyspark.ml.clustering import KMeans
     from pyspark.ml.evaluation import ClusteringEvaluator
@@ -551,7 +551,7 @@ def build_mart_alocacao_otima(df, df_eficiencia=None):
     custo e marca quais cabem dentro de ORCAMENTO_ALOCACAO. Reproduz no Spark a
     heuristica greedy do ADR-010 (ordenar por razao e pegar o prefixo que cabe
     no orcamento), agora como mart consumivel no BigQuery."""
-    print("MART: agg_alocacao_otima (knapsack greedy)")
+    print("MART: agg_alocacao_otima — alocacao otima de orcamento fixo entre municipios (Knapsack Greedy)")
     df_agg = df.groupBy("id_municipio", "sigla_uf").agg(
         max("nome_municipio").alias("nome_municipio"),
         spark_round(avg("taxa_alfabetizacao"), 2).alias("taxa_media"),
@@ -596,7 +596,7 @@ def build_mart_alocacao_otima(df, df_eficiencia=None):
 
 def build_mart_qualidade_resumo(df):
     """Distribuição de municípios por bucket de qualidade por UF."""
-    print("MART: agg_qualidade_resumo")
+    print("MART: agg_qualidade_resumo — distribuicao de municipios por qualidade de dados (bucket Critico/Ruim/Razoavel/Excelente)")
     df_base = df.select("ano", "id_municipio", "sigla_uf", "taxa_alfabetizacao", "deficit_absoluto_proxy") \
                 .dropDuplicates(["id_municipio", "ano"])
     df_base = df_base.withColumn("bucket_qualidade",
@@ -618,7 +618,7 @@ def build_mart_qualidade_resumo(df):
 
 def build_mart_correlacoes_uf(df):
     """Correlação Pearson gasto×taxa por UF (requer SICONFI)."""
-    print("MART: agg_correlacoes_uf")
+    print("MART: agg_correlacoes_uf — forca da relacao entre gasto e taxa de alfabetizacao, por UF")
     if "gasto_por_habitante_educacao" not in df.columns:
         return None
     try:
@@ -642,7 +642,7 @@ def build_mart_correlacoes_uf(df):
 
 def build_mart_roi_executivo(df, mart_custo=None, mart_investimento=None):
     """ROI executivo por UF — custo da ineficiência vs investimento necessário."""
-    print("MART: agg_roi_executivo")
+    print("MART: agg_roi_executivo — ROI executivo por UF: custo da ineficiencia vs investimento necessario")
     if mart_custo is None or mart_investimento is None:
         return None
 
@@ -671,7 +671,7 @@ def build_mart_roi_executivo(df, mart_custo=None, mart_investimento=None):
 
 def build_mart_alocacao_otima_estrategias(df, mart_projecao=None):
     """3 estratégias de alocação comparadas: Greedy, Máx Impacto, Menor Custo Per Capita."""
-    print("MART: agg_alocacao_otima_estrategias")
+    print("MART: agg_alocacao_otima_estrategias — 3 estrategias de alocacao de orcamento comparadas (Greedy, Max Impacto, Menor Custo Per Capita)")
     if mart_projecao is None:
         return None
 

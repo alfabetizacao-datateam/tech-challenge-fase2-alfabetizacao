@@ -537,7 +537,7 @@ def build_mart_custo_ineficiencia(df):
 
 def build_mart_projecao_investimento(df, df_eficiencia=None):
     logger.info("=" * 60)
-    logger.info("MART 9: agg_projecao_investimento")
+    logger.info("MART 9: agg_projecao_investimento — Custo para Atingir 80% de Alfabetizacao")
     logger.info("=" * 60)
     logger.info("  Proposito: Quanto custaria levar cada municipio a 80% de alfabetizacao?")
     logger.info("  Modelo: custo marginal per capita (ADR-012) x populacao alfabetizavel (ADR-013)")
