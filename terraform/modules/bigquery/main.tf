@@ -19,7 +19,7 @@ resource "google_bigquery_table" "agg_uf_indicadores" {
   table_id            = "agg_uf_indicadores"
   project             = var.project_id
   deletion_protection = false
-  description         = "Visão executiva por UF e ano — 49 linhas, 13 colunas"
+  description         = "Panorama por UF e ano: taxa de alfabetizacao, meta e gap"
 
   external_data_configuration {
     autodetect    = true
@@ -34,7 +34,7 @@ resource "google_bigquery_table" "agg_municipio_ranking" {
   table_id            = "agg_municipio_ranking"
   project             = var.project_id
   deletion_protection = false
-  description         = "Ranking de priorização municipal — 4.342 linhas, 13 colunas"
+  description         = "Ranking nacional de urgencia por municipio, para priorizar por onde comecar"
 
   external_data_configuration {
     autodetect    = true
@@ -49,7 +49,7 @@ resource "google_bigquery_table" "agg_rede_indicadores" {
   table_id            = "agg_rede_indicadores"
   project             = var.project_id
   deletion_protection = false
-  description         = "Comparação entre redes (Municipal, Estadual, Federal, Privada)"
+  description         = "Comparacao de desempenho entre redes de ensino (Municipal, Estadual, Federal, Privada)"
 
   external_data_configuration {
     autodetect    = true
@@ -64,7 +64,7 @@ resource "google_bigquery_table" "agg_priorizacao" {
   table_id            = "agg_priorizacao"
   project             = var.project_id
   deletion_protection = false
-  description         = "Matriz equidade vs eficiência — 4 quadrantes estratégicos"
+  description         = "Matriz equidade vs eficiencia: cruza severidade e deficit per capita em 4 quadrantes estrategicos"
 
   external_data_configuration {
     autodetect    = true
@@ -79,7 +79,7 @@ resource "google_bigquery_table" "agg_eficiencia_financeira" {
   table_id            = "agg_eficiencia_financeira"
   project             = var.project_id
   deletion_protection = false
-  description         = "Eficiência financeira por município (SICONFI vs alfabetização)"
+  description         = "Classificacao de cada municipio por eficiencia do gasto (Eficiente, Alto Gasto, Subinvestido, Ineficiente)"
 
   external_data_configuration {
     autodetect    = true
@@ -94,7 +94,7 @@ resource "google_bigquery_table" "agg_custo_ineficiencia" {
   table_id            = "agg_custo_ineficiencia"
   project             = var.project_id
   deletion_protection = false
-  description         = "Custo do desperdício por município — R$13,65bi estimado"
+  description         = "Quanto do orcamento ja existente esta sendo desperdicado por ma gestao, por municipio"
 
   external_data_configuration {
     autodetect    = true
@@ -109,7 +109,7 @@ resource "google_bigquery_table" "agg_projecao_investimento" {
   table_id            = "agg_projecao_investimento"
   project             = var.project_id
   deletion_protection = false
-  description         = "Projeção de investimento para atingir 80% de alfabetização"
+  description         = "Quanto custaria levar cada municipio a 80% de alfabetizacao"
 
   external_data_configuration {
     autodetect    = true
@@ -124,7 +124,7 @@ resource "google_bigquery_table" "agg_top10_uf" {
   table_id            = "agg_top10_uf"
   project             = var.project_id
   deletion_protection = false
-  description         = "Top 10 municípios prioritários por UF — 487 linhas"
+  description         = "Os 10 municipios mais prioritarios de cada UF, para acao do gestor estadual"
 
   external_data_configuration {
     autodetect    = true
@@ -139,7 +139,7 @@ resource "google_bigquery_table" "agg_clusters_municipios" {
   table_id            = "agg_clusters_municipios"
   project             = var.project_id
   deletion_protection = false
-  description         = "Segmentação por regras — 4 perfis de município (taxa × deficit)"
+  description         = "Segmentacao de municipios em 4 perfis economico-educacionais, por regras (taxa x deficit)"
 
   external_data_configuration {
     autodetect    = true
@@ -154,7 +154,7 @@ resource "google_bigquery_table" "agg_alocacao_otima" {
   table_id            = "agg_alocacao_otima"
   project             = var.project_id
   deletion_protection = false
-  description         = "ML: Knapsack Greedy — alocação ótima de R$500M"
+  description         = "Alocacao otima de orcamento fixo entre municipios, via Knapsack Greedy"
 
   external_data_configuration {
     autodetect    = true
@@ -169,7 +169,7 @@ resource "google_bigquery_table" "agg_qualidade_resumo" {
   table_id            = "agg_qualidade_resumo"
   project             = var.project_id
   deletion_protection = false
-  description         = "Distribuição de municípios por bucket de qualidade e UF (Crítico/Ruim/Razoável/Excelente)"
+  description         = "Distribuicao de municipios por qualidade de dados (bucket Critico/Ruim/Razoavel/Excelente), por UF"
 
   external_data_configuration {
     autodetect    = true
@@ -184,7 +184,7 @@ resource "google_bigquery_table" "agg_correlacoes_uf" {
   table_id            = "agg_correlacoes_uf"
   project             = var.project_id
   deletion_protection = false
-  description         = "Correlação Pearson gasto×taxa por UF (requer SICONFI) — análise de força relação custo-resultado"
+  description         = "Forca da relacao entre gasto e taxa de alfabetizacao por UF (correlacao de Pearson, requer SICONFI)"
 
   external_data_configuration {
     autodetect    = true
@@ -199,7 +199,7 @@ resource "google_bigquery_table" "agg_roi_executivo" {
   table_id            = "agg_roi_executivo"
   project             = var.project_id
   deletion_protection = false
-  description         = "ROI executivo por UF — custo da ineficiência vs investimento necessário (19.4× nacional)"
+  description         = "ROI executivo por UF: custo da ineficiencia vs investimento necessario para fechar o gap"
 
   external_data_configuration {
     autodetect    = true
@@ -214,7 +214,7 @@ resource "google_bigquery_table" "agg_alocacao_otima_estrategias" {
   table_id            = "agg_alocacao_otima_estrategias"
   project             = var.project_id
   deletion_protection = false
-  description         = "3 estratégias de alocação de R$500M comparadas (Greedy, Máx Impacto, Menor Custo Per Capita)"
+  description         = "3 estrategias de alocacao de orcamento comparadas (Greedy, Maximo Impacto, Menor Custo Per Capita)"
 
   external_data_configuration {
     autodetect    = true
