@@ -2,7 +2,7 @@
 
 Pipeline de dados em arquitetura Medalhão (Bronze/Silver/Gold), híbrida (Batch + Streaming), rodando em GCP, que integra o Indicador Criança Alfabetizada (INEP/Base dos Dados) com dados territoriais (IBGE) e financeiros (SICONFI) para apoiar priorização de investimento público em alfabetização infantil.
 
-> Repositório sucessor de [`luizmaibashi/tech-challenge-fase-2`](https://github.com/luizmaibashi/tech-challenge-fase-2) (arquivado), reconstruído com Git Flow real. Ver [`AGENTS.md`](AGENTS.md) para o contrato de colaboração da dupla.
+> Ver [`AGENTS.md`](AGENTS.md) para o contrato de colaboração da dupla e a Linguagem Ubíqua do domínio.
 
 ---
 
@@ -162,6 +162,7 @@ Este projeto é auditado com o mesmo rigor que se espera de um pipeline em produ
 - **Sem CI** ainda — os testes não rodam automaticamente em push/PR.
 - **Looker Studio:** dashboard em construção (página 1 pronta; páginas adicionais pendentes).
 - Ver [`docs/NUMEROS_RECALCULADOS.md`](docs/NUMEROS_RECALCULADOS.md) para o histórico de correções do modelo de custo (a primeira versão superestimou o investimento necessário em 77×, corrigido e documentado via ADR).
+- **Vídeo executivo (até 5 min, item obrigatório do enunciado):** gravado. Slides de apoio em [`slide projeto/`](slide%20projeto/) (apresentação em 6 blocos: desafio, arquitetura, valor da pipeline, IA, conclusão).
 
 ## Time
 
