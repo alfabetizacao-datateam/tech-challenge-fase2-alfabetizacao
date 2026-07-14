@@ -39,7 +39,7 @@ A sessão de 2026-06-29 enriqueceu 7 notebooks com 12+ análises precisas:
 | `agg_alocacao_otima_estrategias` | 03 | municipio + estrategia | SICONFI | ranking_estrategia por 3 métodos |
 
 **Fora de escopo agora** (requerem dados externos Silver/Gold):
-- Zona de conversão SAEB / CV intra-municipal → dependem `Alunos.csv` (Fase 2)
+- Zona de conversão SAEB / CV intra-municipal → dependem `Alunos.csv` (backlog, fora deste escopo)
 - Bootstrap + ARI, Wilcoxon → requerem sklearn no Dataproc cluster
 - NPV/TIR completa → requerem fluxo de caixa temporal (não disponível)
 
@@ -58,7 +58,7 @@ A sessão de 2026-06-29 enriqueceu 7 notebooks com 12+ análises precisas:
 - Insights reprodutíveis: mesma lógica em produção que nos notebooks
 - Validação via cross-check: comparar output Gold com notebook local
 - FinOps: bucket_qualidade + correlações custam pouco em BigQuery (tabelas pequenas)
-- Roadmap claro: 4 novos marts abrem porta para Zona Conversão (Fase 2)
+- Roadmap claro: 4 novos marts abrem porta para Zona Conversão (backlog futuro)
 
 ### Negativas (Custo/Risco):
 - 3 dos 4 marts dependem de SICONFI: sem SICONFI no GCS, geram vazio (mitiga com guarda condicional)
@@ -79,9 +79,9 @@ A sessão de 2026-06-29 enriqueceu 7 notebooks com 12+ análises precisas:
 |---|---|---|
 | A. Deixar análises só nos notebooks | Zero custo dev | Não escala; insights confinados; impossível BI |
 | B. Criar SQL nativo em BigQuery | Mais rápido | BigQuery não acessa Silver/Gold sem Spark gerar; menos testado |
-| C. Portar TODAS 12+ análises | Completo | Zona conversão + Bootstrap requerem dados externos (Alunos.csv); bloqueado Fase 2 |
+| C. Portar TODAS 12+ análises | Completo | Zona conversão + Bootstrap requerem dados externos (Alunos.csv); adiado para backlog |
 
-**Escolhido: A + B combinado** → porta nas 4 análises imediatamente utilizáveis, deixa roadmap claro para Fase 2.
+**Escolhido: A + B combinado** → porta nas 4 análises imediatamente utilizáveis, deixa roadmap claro para o backlog seguinte.
 
 ---
 

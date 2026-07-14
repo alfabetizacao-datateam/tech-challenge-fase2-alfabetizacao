@@ -2,7 +2,7 @@
 
 ## 0. Este é o repositório titular
 
-Sucessor de `luizmaibashi/tech-challenge-fase-2` (arquivado, ver seu README). Reconstruído em `alfabetizacao-datateam/tech-challenge-fase2-alfabetizacao` com Git Flow real desde o primeiro commit — todo PR tem branch dedicada e revisão cruzada Luiz/Renan. Plano de reconstrução: `docs/superpowers/plans/2026-07-04-repo-novo-git-flow.md`.
+Repositório único do projeto, com Git Flow real desde o primeiro commit — todo PR tem branch dedicada e revisão cruzada Luiz/Renan.
 
 Este documento é a "Memória de Contexto" e o Contrato de Trabalho para o projeto *Tech Challenge Fase 2*. Qualquer IA agindo neste repositório (Claude/Agentes) deve ler isso antes de iniciar.
 
